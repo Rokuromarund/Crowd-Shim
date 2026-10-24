@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>群衆シミュレーター 3D｜交差点ひとつ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#C5CFDA; --sidewalk:#E1E5EA; --curb:#A9B3BF; --asphalt:#5A6270; --slab:#46505D;
+  --paint:#F3F5F7; --tactile:#E6B530;
+  --panel:#1C2532; --panel-2:#283344; --ink:#ECF1F6; --muted:#9AA8BA; --rule:#36445A;
+  --go:#2FD08A; --stop:#FF5964; --amber:#FFC23D; --on-amber:#1C2532;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  background:var(--bg);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#171D26; --sidewalk:#3A4250; --curb:#2A313C; --asphalt:#252A32; --slab:#1E232A;
+    --paint:#B8C0CA; --tactile:#A9842A;
+    --panel:#121822; --panel-2:#1D2633; --ink:#E5EBF2; --muted:#8693A5; --rule:#2B384A;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#171D26; --sidewalk:#3A4250; --curb:#2A313C; --asphalt:#252A32; --slab:#1E232A;
+  --paint:#B8C0CA; --tactile:#A9842A;
+  --panel:#121822; --panel-2:#1D2633; --ink:#E5EBF2; --muted:#8693A5; --rule:#2B384A;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  -webkit-tap-highlight-color:transparent;
+}
+#app{position:relative;width:100%;height:100%;overflow:hidden}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+
+.hud{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;pointer-events:none}
+.card{background:var(--panel);color:var(--ink);border-radius:14px;box-shadow:0 6px 20px rgba(10,15,25,.28)}
+.signal{display:flex;align-items:center;gap:10px;padding:9px 14px 9px 10px}
+.lamp{width:34px;height:34px;border-radius:9px;background:#0A0E14;display:grid;place-items:center;flex:none}
+.lamp svg{width:22px;height:22px;transition:opacity .15s}
+.sig-text small{display:block;font-size:11px;color:var(--muted);line-height:1.2}
+.sig-text b{display:block;font-size:17px;font-weight:900;line-height:1.25;letter-spacing:.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sig4{display:grid;grid-template-columns:auto auto;gap:3px 12px;margin-top:3px;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sig4 i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:0}
+.stats{display:grid;grid-template-columns:auto auto;gap:4px 14px;padding:9px 13px;font-size:11px}
+.stats span{color:var(--muted);white-space:nowrap}
+.stats b{font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats .more{display:none;grid-column:1/-1;text-align:center;font-size:10.5px;font-weight:700;line-height:1.2}
+
+.toolbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:4px;padding:5px;border-radius:16px;background:var(--panel);box-shadow:0 6px 20px rgba(10,15,25,.3);max-width:calc(100% - 20px)}
+.toolbar button{appearance:none;border:0;background:transparent;color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:9px 11px;border-radius:11px;cursor:pointer;white-space:nowrap;min-width:52px}
+.toolbar button[aria-pressed="true"]{background:var(--amber);color:var(--on-amber)}
+.toolbar button:hover{background:var(--panel-2)}
+.toolbar button[aria-pressed="true"]:hover{background:var(--amber)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+.sheet{position:absolute;left:10px;right:10px;bottom:68px;max-height:56%;overflow-y:auto;padding:14px 16px 16px;background:var(--panel);color:var(--ink);border-radius:16px;box-shadow:0 10px 30px rgba(10,15,25,.35)}
+.sheet[hidden]{display:none}
+.sheet h2{font-size:15px;font-weight:900;margin:0 0 2px}
+.sheet .hint{font-size:11px;color:var(--muted);margin:0 0 12px}
+.row{padding:10px 0;border-top:1px solid var(--rule)}
+.row label,.row .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;font-weight:700;margin-bottom:6px}
+.row label output{font-size:12px;color:var(--amber);font-variant-numeric:tabular-nums}
+.row p{font-size:11px;color:var(--muted);margin:5px 0 0;line-height:1.55}
+input[type=range]{width:100%;accent-color:var(--amber);margin:0}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px}
+.seg button,.btns button{appearance:none;border:1px solid var(--rule);background:var(--panel-2);color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:8px 6px;border-radius:9px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--amber);border-color:var(--amber);color:var(--on-amber)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:11px;color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-top:12px;border-top:1px solid var(--rule)}
+
+.info{position:absolute;left:10px;bottom:68px;width:min(340px,calc(100% - 20px));padding:12px 14px 13px}
+.info[hidden]{display:none}
+.info-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.info-head b{font-size:14px;font-weight:900;margin-right:auto}
+.info-head .info-more{display:none;width:auto;padding:0 10px;font-size:12px;font-weight:700}
+.info-head button{appearance:none;border:0;background:var(--panel-2);color:var(--ink);width:30px;height:30px;border-radius:8px;font:inherit;font-size:16px;line-height:1;cursor:pointer}
+.info-route{margin:6px 0 10px;font-size:14px;font-weight:700;line-height:1.6}
+.info-route i{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px 0 2px;vertical-align:0}
+.steps{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:4px;counter-reset:s}
+.steps li{counter-increment:s;font-size:11px;line-height:1.35;color:var(--muted);padding:6px 7px 6px;border-radius:8px;background:var(--panel-2);border-top:3px solid var(--rule)}
+.steps li::before{content:counter(s) "　";font-weight:900}
+.steps li.done{color:var(--ink);border-top-color:var(--go)}
+.steps li.now{color:var(--on-amber);background:var(--amber);border-top-color:var(--amber);font-weight:700}
+.info-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:12px}
+.info-grid dt{color:var(--muted)}
+.info-grid dd{margin:0;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.info-legend{display:flex;flex-wrap:wrap;gap:3px 12px;margin:9px 0 0;font-size:11px;color:var(--muted)}
+.info-legend i{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:5px;vertical-align:2px}
+@media (min-width:900px){
+  .info{left:12px;bottom:76px}
+  .sheet{left:auto;right:12px;top:12px;bottom:76px;width:300px;max-height:none}
+  .hud{right:324px}
+  .stats{grid-template-columns:auto auto auto auto}
+}
+@media (max-width:899px){
+  .info{max-height:45%;overflow-y:auto;padding:9px 12px 10px}
+  .info-head .info-more{display:block}
+  .info-route{margin:4px 0 7px;font-size:13px;line-height:1.5}
+  .steps{margin-bottom:7px}
+  .steps li{font-size:10.5px;line-height:1.3;padding:4px 6px}
+  .info:not(.open) .info-grid>:nth-child(n+3),.info:not(.open) .info-legend{display:none}
+}
+@media (max-width:600px){
+  .stats{pointer-events:auto;cursor:pointer;-webkit-user-select:none;user-select:none}
+  .stats .more{display:block}
+  .stats:not(.open)>:nth-child(n+5):not(.more){display:none}
+}
+@media (max-width:420px){
+  .hud{flex-wrap:wrap}
+  .hud .stats{grid-template-columns:auto auto auto auto;width:100%}
+  .sig4{font-size:12px;gap:2px 10px}
+  .signal{padding:8px 10px}
+  .stats{gap:2px 10px;padding:8px 10px}
+  .stats b{font-size:13px}
+  .sig-text b{font-size:15px}
+  .toolbar button{padding:9px 8px;min-width:0}
+}
+
+/* ---- 3D版の追加分 ---- */
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--muted);flex:none;box-shadow:0 0 0 3px rgba(255,255,255,.08)}
+.dot.go{background:var(--go)}.dot.stop{background:var(--stop)}.dot.flash{background:var(--amber)}
+.signal .sig-text b{display:flex;align-items:center;gap:8px}
+.seg a,.btns a{display:block;text-align:center;text-decoration:none;appearance:none;border:1px solid var(--rule);background:var(--panel-2);color:var(--ink);font-size:12px;font-weight:700;padding:8px 6px;border-radius:9px}
+.btns{grid-template-columns:1fr}
+.info-route .st{display:inline-block;margin-left:4px}
+@media (max-width:899px){.sheet:not([hidden])~.info{display:none}.info:not(.open) .info-grid>:nth-child(n+3){display:block}.info-route{margin-bottom:6px}}
+.msg{position:absolute;inset:0;display:grid;place-items:center;padding:24px;background:var(--bg);z-index:5}
+.msg[hidden]{display:none}
+.msg .card{max-width:420px;padding:20px 22px;line-height:1.7;font-size:14px}
+.msg h2{margin:0 0 6px;font-size:16px;font-weight:900}
+.msg p{margin:0 0 12px;color:var(--muted);font-size:13px}
+.msg a,.msg button{display:inline-block;appearance:none;border:0;font:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:10px;background:var(--amber);color:var(--on-amber);text-decoration:none;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="cv" aria-label="交差点ひとつを人・自転車・車が行き交う3Dシミュレーション"></canvas>
+
+  <div class="hud">
+    <div class="card signal">
+      <div class="sig-text">
+        <small>歩行者信号（切替までの秒数）</small>
+        <b><i class="dot" id="sigDot"></i><span id="sigText">―</span></b>
+      </div>
+    </div>
+    <div class="card stats" id="stats" role="button" tabindex="0" aria-expanded="false" aria-live="off">
+      <span>街にいる人</span><b id="stN">0人</b>
+      <span>横断中</span><b id="stX">0人</b>
+      <span>平均の待ち時間</span><b id="stW">0秒</b>
+      <span class="more" id="stMore">ほか1件 ▾</span>
+    </div>
+  </div>
+
+  <section class="sheet" id="sheet" hidden aria-label="設定">
+    <h2>街の設定</h2>
+    <p class="hint">ドラッグで回転、ピンチやホイールで拡大、2本指（右ドラッグ）で移動できます。人をタップすると、その人を追いかけます。</p>
+    <div class="row">
+      <label for="inRate">人の流入 <output id="oRate">120人/分</output></label>
+      <input id="inRate" type="range" min="30" max="600" step="10" value="120">
+    </div>
+    <div class="row">
+      <label for="inGreen">歩行者信号の青 <output id="oGreen">20秒</output></label>
+      <input id="inGreen" type="range" min="6" max="40" step="1" value="20">
+    </div>
+    <div class="row">
+      <label for="inBike">自転車の割合 <output id="oBike">8%</output></label>
+      <input id="inBike" type="range" min="0" max="30" step="1" value="8">
+    </div>
+    <div class="row">
+      <label for="inCar">車の量 <output id="oCar">×1.0</output></label>
+      <input id="inCar" type="range" min="0" max="2" step="0.1" value="1">
+    </div>
+    <div class="row">
+      <div class="lab">影</div>
+      <div class="seg" id="segShadow">
+        <button type="button" data-v="1" aria-pressed="true">あり</button>
+        <button type="button" data-v="0" aria-pressed="false">なし</button>
+      </div>
+      <p>スマホなどで重いときは「なし」にすると軽くなります。</p>
+    </div>
+    <div class="btns"><a href="../index.html" id="link2d">2D版へ</a></div>
+  </section>
+
+  <section class="card info" id="info" hidden aria-live="polite" aria-label="選んだ人の情報">
+    <div class="info-head"><b id="infoTitle">この人</b><button type="button" id="infoClose" aria-label="閉じる">×</button></div>
+    <p class="info-route" id="infoRoute"></p>
+    <dl class="info-grid">
+      <dt>いまの状態</dt><dd id="infoState"></dd>
+      <dt>速さ</dt><dd id="infoSpeed"></dd>
+      <dt>追いかけた時間</dt><dd id="infoTime"></dd>
+    </dl>
+  </section>
+
+  <nav class="toolbar" id="toolbar" aria-label="操作">
+    <button type="button" id="btnPause" aria-pressed="false">一時停止</button>
+    <button type="button" id="btnSpeed">速さ ×1</button>
+    <button type="button" id="btnView">視点 斜め上</button>
+    <button type="button" id="btnNight" aria-pressed="false">昼</button>
+    <button type="button" id="btnSheet" aria-pressed="false" aria-controls="sheet">設定</button>
+  </nav>
+
+  <div class="msg" id="msg" hidden role="alert"><div class="card"><h2 id="msgT"></h2><p id="msgP"></p><a href="../index.html" id="msgA">2D版を開く</a></div></div>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script src="geom.js"></script>
+<script src="sim.js"></script>
+<script src="world.js"></script>
+<script src="actors.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
