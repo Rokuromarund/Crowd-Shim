@@ -19,6 +19,9 @@
 
 読み込み順：`three.min.js` → `OrbitControls.js` → `geom.js` → `sim.js` → `world.js` → `actors.js` → `main.js`
 
+スマホでダウンロードして開く用に、全部を1ファイルにまとめた `../3d.html` を置いている。
+3d/ の中を直したら `node 3d/build.js` で作り直す（3d.html は手で直さない）。
+
 ## 座標
 
 - シミュレーションは **メートル**。原点は交差点の中心、**x は東、y は南、z は上**（2D版と同じ）。
