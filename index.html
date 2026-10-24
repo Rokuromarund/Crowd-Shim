@@ -414,7 +414,7 @@ function segHitsRect(ax, ay, bx, by, R) {
   return true;
 }
 // 街区の中で、建物をよけて歩く道すじ（曲がり角の点のならび）
-function blockPath(b, A, Bp) {
+function blockPath0(b, A, Bp) {
   const B = BLOCKS[b], R = [B.b0x - .5, B.b0y - .5, B.b1x + .5, B.b1y + .5];
   const ok = (P, Q) => !segHitsRect(P.x, P.y, Q.x, Q.y, R);
   if (ok(A, Bp)) return [Bp];
@@ -429,6 +429,39 @@ function blockPath(b, A, Bp) {
     if (c < bc) { bc = c; best = [k1, k2, Bp]; }
   }
   return best || [Bp];
+}
+// 駐輪場は道がわ（外がわ）の角をまわってよける（ex は目的の駐輪場で、よけない）
+function blockPath(b, A, Bp, ex) { return rackDetour(b, A, blockPath0(b, A, Bp), ex); }
+function rackDetour(b, A, wp, ex) {
+  const rs = RACKS.filter(r => r.b === b && r !== ex);
+  if (!rs.length) return wp;
+  const inf = (r, m) => [r.rect[0] - m, r.rect[1] - m, r.rect[2] + m, r.rect[3] + m];
+  const inR = (Q, I) => Q.x > I[0] && Q.x < I[2] && Q.y > I[1] && Q.y < I[3];
+  const out = [], q = wp.slice(), done = new Set();
+  let P = { x: A.x, y: A.y }, g = 12;
+  while (q.length) {
+    const Q = q[0]; let hit = null;
+    for (const r of rs) { const I = inf(r, .45); if (!done.has(r) && !inR(Q, I) && segHitsRect(P.x, P.y, Q.x, Q.y, I)) { hit = r; break; } }
+    if (hit && g-- > 0) {
+      done.add(hit);
+      while (q.length > 1 && q[0].r === hit) q.shift();   // 引き直しのとき、前に入れた同じ駐輪場の角は捨てる
+      const o = hit.w + hit.sg * (RK_D1 + .7), e0 = hit.a - .45, e1 = hit.e + .45;
+      const cs = [e0, e1].map(e => hit.v ? { x: o, y: e, k: 1, r: hit } : { x: e, y: o, k: 1, r: hit });
+      // 角を通らない・片方だけ・両方、のうち、駐輪場にぶつからない最短の道を選ぶ
+      const I2 = inf(hit, .2), T = q[0], cand = [[], [cs[0]], [cs[1]], [cs[0], cs[1]], [cs[1], cs[0]]];
+      let bl = [cs[0], cs[1]], bd = Infinity;
+      for (const c of cand) {
+        let L = 0, X = P, okc = true;
+        for (const Y of [...c, T]) { if (segHitsRect(X.x, X.y, Y.x, Y.y, I2) && !inR(Y, I2)) { okc = false; break; } L += Math.hypot(Y.x - X.x, Y.y - X.y); X = Y; }
+        if (okc && L < bd) { bd = L; bl = c; }
+      }
+      q.unshift(...bl);
+      continue;
+    }
+    q.shift(); if (!Q.k) done.clear();
+    out.push(Q); P = Q;
+  }
+  return out;
 }
 
 /* ---------- 信号 ---------- */
@@ -540,7 +573,7 @@ function claim(pl, pt, act) {
 // 予約を使って駐輪場へ向かう（停めるときは壁と垂直に、外側から入る）
 function startVia(p, v) {
   p.via = v; p.act = null; p.rkEx = v.rack;
-  p.wp = v.act === 'park' ? blockPath(p.block, p, v.pre).concat([v]) : blockPath(p.block, p, v);
+  p.wp = v.act === 'park' ? blockPath(p.block, p, v.pre, v.rack).concat([v]) : blockPath(p.block, p, v, v.rack);
 }
 // 予約を取り消す（停める予定のスロットは空け、取りに行く自転車は取られていない状態に戻す）
 function relVia(p) {
@@ -559,7 +592,7 @@ function endVia(p) {
   }
   p.fhx = v.rack.nx; p.fhy = v.rack.ny;
   p.via = null; p.act = null;
-  p.wp = blockPath(p.block, p, finalTarget(p));
+  p.wp = [v.pre].concat(blockPath(p.block, v.pre, finalTarget(p)));   // 駐輪場からはまず道がわへ出る
 }
 // 自転車の徐行：進行方向約4m先の円すい内でいちばん近い人との距離に応じて速さを落とす
 function bikeSlow(p, ex, ey, sp) {
@@ -687,7 +720,7 @@ function clampBlock(p, b) {
     // 壁の側以外でいちばん近い辺へ押し出す
     const c = [[R.nx > 0 ? 1e9 : p.x - rx0 + m, -1, 0], [R.nx < 0 ? 1e9 : rx1 + m - p.x, 1, 0], [R.ny > 0 ? 1e9 : p.y - ry0 + m, 0, -1], [R.ny < 0 ? 1e9 : ry1 + m - p.y, 0, 1]];
     let q = c[0]; for (const e of c) if (e[0] < q[0]) q = e;
-    if (q[1]) { p.x = q[1] < 0 ? rx0 - m : rx1 + m; p.vx = 0; } else { p.y = q[2] < 0 ? ry0 - m : ry1 + m; p.vy = 0; }
+    if (q[1]) { p.x = q[1] < 0 ? rx0 - m : rx1 + m; if (p.vx * q[1] < 0) p.vx = 0; } else { p.y = q[2] < 0 ? ry0 - m : ry1 + m; if (p.vy * q[2] < 0) p.vy = 0; }   // 向かう成分だけ消して、辺にそってすべる
   }
 }
 
@@ -949,7 +982,7 @@ function step(dt) {
       let q;
       if (!p.inside) q = p.up;
       else {
-        while (p.wp.length > 1 && Math.hypot(p.wp[0].x - p.x, p.wp[0].y - p.y) < 1.6) p.wp.shift();
+        while (p.wp.length > 1 && Math.hypot(p.wp[0].x - p.x, p.wp[0].y - p.y) < (p.wp[0].k ? .6 : 1.6)) p.wp.shift();   // 駐輪場の角は近くまで行ってから次へ
         q = p.wp.length ? p.wp[0] : finalTarget(p);
       }
       tx = q.x; ty = q.y;
@@ -1016,8 +1049,9 @@ function step(dt) {
     if (sv < .2) { if (p.st === 'approach' && p.wait != null) p.sigStopT += dt; else p.jamT += dt; }
     if (sample) p.trail.push(p.x, p.y, sv);
     if (p.st === 'approach' || p.st === 'leave') {
-      if (!p.inside && inBlock(p.x, p.y, p.block, .2 + p.r * .5)) { p.inside = true; p.wp = blockPath(p.block, p, finalTarget(p)); }
+      if (!p.inside && inBlock(p.x, p.y, p.block, .2 + p.r * .5)) { p.inside = true; p.wp = blockPath(p.block, p, finalTarget(p), p.rkEx); }
       if (p.inside) clampBlock(p, p.block);
+      if (p.inside && ((simT * 30 | 0) + i & 15) === 0) p.wp = rackDetour(p.block, p, p.wp, p.rkEx);   // 押されて駐輪場の反対側に出ても、道すじを引き直す
     }
     // 建物に着く自転車は、駐輪場に空きがあれば先に停めて歩く
     if (p.st === 'leave' && p.inside && p.bike && p.to.kind === 'door' && !p.via && simT - (p.pkT ?? -9) > 2) { p.pkT = simT; const v = claim(p.to, p, 'park'); if (v) startVia(p, v); }
@@ -1802,8 +1836,8 @@ function routePts(p) {
     add(p.dst); add(p.leg.ent); legsFrom(p.legs, p.li + 1); walk(p.exitB, p.exitPt);
   } else {
     if (!p.inside) add(p.up);
-    if (p.st === 'approach') { for (const w of (p.inside ? p.wp : blockPath(p.block, cur, p.tgt))) add(w); add(p.dst); add(p.leg.ent); legsFrom(p.legs, p.li + 1); walk(p.exitB, p.exitPt); }
-    else for (const w of (p.inside ? p.wp : blockPath(p.block, cur, p.exitPt))) add(w);
+    if (p.st === 'approach') { for (const w of (p.inside ? p.wp : blockPath(p.block, cur, p.tgt, p.rkEx))) add(w); add(p.dst); add(p.leg.ent); legsFrom(p.legs, p.li + 1); walk(p.exitB, p.exitPt); }
+    else for (const w of (p.inside ? p.wp : blockPath(p.block, cur, p.exitPt, p.rkEx))) add(w);
   }
   return pts;
 }
