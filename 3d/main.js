@@ -97,7 +97,8 @@ function presetPose(v) {
   const g = sel ? followPoint(sel) : new THREE.Vector3(0, 0, 0);
   if (v === 'top') return { p: g.clone().add(new THREE.Vector3(.01, 100 * k, .5 * k)), g };
   // 斜め上：北東から見下ろす（南東の駅は30mで視界をふさぐので、低い北東側）
-  if (v === 'oblique') { const d = 75 * k; return { p: g.clone().add(new THREE.Vector3(d * .5, d * .71, -d * .5)), g }; }
+  // 縦長の画面では手前の建物の屋根が下半分をふさぐので、見下ろす角度を約45°から約60°に上げる
+  if (v === 'oblique') { const d = 75 * k, hz = camera.aspect < 1 ? .35 : .5, vt = camera.aspect < 1 ? .87 : .71; return { p: g.clone().add(new THREE.Vector3(d * hz, d * vt, -d * hz)), g }; }
   // 人の目線（選択なし）：横断歩道そばの角の地面から交差点を見る
   return { p: new THREE.Vector3(9.5, 1.8, 9.5), g: new THREE.Vector3(-1, 1.2, -1) };
 }
