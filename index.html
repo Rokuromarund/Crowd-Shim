@@ -56,6 +56,7 @@ canvas:active{cursor:grabbing}
 .stats{display:grid;grid-template-columns:auto auto;gap:4px 14px;padding:9px 13px;font-size:11px}
 .stats span{color:var(--muted);white-space:nowrap}
 .stats b{font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats .more{display:none;grid-column:1/-1;text-align:center;font-size:10.5px;font-weight:700;line-height:1.2}
 
 .toolbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:4px;padding:5px;border-radius:16px;background:var(--panel);box-shadow:0 6px 20px rgba(10,15,25,.3);max-width:calc(100% - 20px)}
 .toolbar button{appearance:none;border:0;background:transparent;color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:9px 11px;border-radius:11px;cursor:pointer;white-space:nowrap;min-width:52px}
@@ -83,7 +84,8 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
 .info{position:absolute;left:10px;bottom:68px;width:min(340px,calc(100% - 20px));padding:12px 14px 13px}
 .info[hidden]{display:none}
 .info-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.info-head b{font-size:14px;font-weight:900}
+.info-head b{font-size:14px;font-weight:900;margin-right:auto}
+.info-head .info-more{display:none;width:auto;padding:0 10px;font-size:12px;font-weight:700}
 .info-head button{appearance:none;border:0;background:var(--panel-2);color:var(--ink);width:30px;height:30px;border-radius:8px;font:inherit;font-size:16px;line-height:1;cursor:pointer}
 .info-route{margin:6px 0 10px;font-size:14px;font-weight:700;line-height:1.6}
 .info-route i{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px 0 2px;vertical-align:0}
@@ -102,6 +104,19 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
   .sheet{left:auto;right:12px;top:12px;bottom:76px;width:300px;max-height:none}
   .hud{right:324px}
   .stats{grid-template-columns:auto auto auto auto}
+}
+@media (max-width:899px){
+  .info{max-height:45%;overflow-y:auto;padding:9px 12px 10px}
+  .info-head .info-more{display:block}
+  .info-route{margin:4px 0 7px;font-size:13px;line-height:1.5}
+  .steps{margin-bottom:7px}
+  .steps li{font-size:10.5px;line-height:1.3;padding:4px 6px}
+  .info:not(.open) .info-grid>:nth-child(n+3),.info:not(.open) .info-legend{display:none}
+}
+@media (max-width:600px){
+  .stats{pointer-events:auto;cursor:pointer;-webkit-user-select:none;user-select:none}
+  .stats .more{display:block}
+  .stats:not(.open)>:nth-child(n+5):not(.more){display:none}
 }
 @media (max-width:420px){
   .hud{flex-wrap:wrap}
@@ -126,13 +141,14 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
         <div class="sig4" id="sig4"><span></span><span></span><span></span><span></span></div>
       </div>
     </div>
-    <div class="card stats" aria-live="off">
+    <div class="card stats" id="stats" role="button" tabindex="0" aria-expanded="false" aria-live="off">
       <span>街にいる人</span><b id="stN">0人</b>
       <span>横断中</span><b id="stX">0人</b>
       <span>平均の待ち時間</span><b id="stW">0秒</b>
       <span>一番混む場所</span><b id="stD">0人/㎡</b>
       <span>青以外で横断開始</span><b id="stR">0人</b>
       <span>入れなかった人</span><b id="stO">0人</b>
+      <span class="more" id="stMore">ほか4件 ▾</span>
     </div>
   </div>
 
@@ -181,7 +197,7 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
   </section>
 
   <section class="card info" id="info" hidden aria-live="polite" aria-label="選んだ人の情報">
-    <div class="info-head"><b>この人の行き先</b><button type="button" id="infoClose" aria-label="閉じる">×</button></div>
+    <div class="info-head"><b>この人の行き先</b><button type="button" class="info-more" id="infoMore" aria-expanded="false" aria-controls="info">詳しく ▾</button><button type="button" id="infoClose" aria-label="閉じる">×</button></div>
     <p class="info-route" id="infoRoute"></p>
     <ol class="steps" id="infoSteps"><li>歩道を歩く</li><li>交差点を渡る</li><li>目的地へ向かう</li></ol>
     <dl class="info-grid">
@@ -196,7 +212,7 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
     <p class="info-legend"><span><i style="background:#33C48D"></i>すいすい</span><span><i style="background:#F2B134"></i>ゆっくり</span><span><i style="background:#E5484D"></i>止まった</span><span>点線はこれからの経路</span><span>◆は交差点に入った地点（色はそのときの信号）</span></p>
   </section>
 
-  <nav class="toolbar" aria-label="操作">
+  <nav class="toolbar" id="toolbar" aria-label="操作">
     <button type="button" id="btnPause" aria-pressed="false">一時停止</button>
     <button type="button" id="btnSpeed">速さ ×1</button>
     <button type="button" id="btnHeat" aria-pressed="false">混雑表示</button>
@@ -210,6 +226,7 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
 const cv = document.getElementById('cv');
 let ctx = cv.getContext('2d');
 const root = document.documentElement;
+const hud = document.querySelector('.hud');
 
 /* ---------- 定数とパラメータ ---------- */
 // 上着：通勤服の落ち着いた色を多めに、明るい色をときどき混ぜる
@@ -1015,7 +1032,8 @@ const ZS = 0.82;
 const I = (x, y, z) => [(x - y) * K * 0.866 + OX, (x + y) * K * 0.5 - (z || 0) * K * ZS + OY];
 const wide = () => innerWidth >= 900;
 function fit() {
-  const top = 78, bottom = 76;
+  // 上端は実際のHUDの下端に合わせる（狭い画面ではHUDが高い）
+  const top = Math.max(78, hud.getBoundingClientRect().bottom - cv.getBoundingClientRect().top + 8), bottom = 76;
   const side = wide() ? 320 : 0;
   const aw = (CW - side) * 0.96, ah = Math.max(200, CH - top - bottom);
   K = clamp(Math.min(aw / (W * 2 * .866), ah / (W * 1.04)), 1.2, 40);
@@ -1543,7 +1561,7 @@ function frame(now) {
     while (acc >= st && n < 24) { step(st); acc -= st; n++; }
     if (n >= 24) acc = 0;
   }
-  draw(); updHUD();
+  draw(); updHUD(); follow(dt);
   requestAnimationFrame(frame);
 }
 
@@ -1633,8 +1651,31 @@ function pickPed(sx, sy) {
   }
   return best;
 }
+// 選んだ人が見える範囲（HUDと下のパネルの間）から外れたら、必要な分だけ画面をそっと寄せる
+let lastIn = 0;
+function follow(dt) {
+  if (!sel || sel.gone || pts.size || performance.now() - lastIn < 1500) return;
+  const cr = cv.getBoundingClientRect(), vis = el => !el.hidden && el.offsetParent, M = 12;
+  const top = hud.getBoundingClientRect().bottom - cr.top + M;
+  let bot = $('toolbar').getBoundingClientRect().top - cr.top - M, l = 24, rt = CW - 24;
+  const ib = vis(info) ? info.getBoundingClientRect() : null, sb = vis(sheet) ? sheet.getBoundingClientRect() : null;
+  const q = I(sel.x, sel.y, footZ(sel.x, sel.y)), hy = q[1] - K * ZS * 1.7;
+  if (wide()) {
+    if (sb) rt = sb.left - cr.left - M;
+    if (ib && q[1] > ib.top - cr.top - M) l = ib.right - cr.left + M;
+  } else {
+    if (ib) bot = Math.min(bot, ib.top - cr.top - M);
+    if (sb) bot = Math.min(bot, sb.top - cr.top - M);
+  }
+  let dx = 0, dy = 0;
+  if (q[0] < l) dx = l - q[0]; else if (q[0] > rt) dx = rt - q[0];
+  if (q[1] > bot) dy = bot - q[1];
+  if (hy + dy < top) dy = top - hy;
+  const f = 1 - Math.exp(-dt * 6);
+  OX += dx * f; OY += dy * f;
+}
 function select(p) {
-  sel = p || null;
+  sel = p || null; lastIn = 0;
   info.hidden = !sel;
   if (sel && !wide() && !sheet.hidden) setSheet(false);
   updInfo();
@@ -1662,6 +1703,22 @@ function updInfo() {
   $('infoJam').textContent = `${Math.floor(p.jamT)}秒`;
 }
 $('infoClose').addEventListener('click', () => select(null));
+// 狭い画面の情報パネルは、ふだんは要点だけ。開いた状態は覚えておく
+let infoOpen = false;
+$('infoMore').addEventListener('click', () => {
+  infoOpen = !infoOpen; info.classList.toggle('open', infoOpen);
+  $('infoMore').textContent = infoOpen ? 'たたむ ▴' : '詳しく ▾';
+  $('infoMore').setAttribute('aria-expanded', infoOpen);
+});
+// 狭い画面の統計は2件だけ表示し、タップで全部出す
+const stats = $('stats');
+function toggleStats() {
+  const o = stats.classList.toggle('open');
+  $('stMore').textContent = o ? 'たたむ ▴' : 'ほか4件 ▾';
+  stats.setAttribute('aria-expanded', o);
+}
+stats.addEventListener('click', toggleStats);
+stats.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStats(); } });
 
 function reset() {
   select(null);
@@ -1693,13 +1750,14 @@ cv.addEventListener('pointermove', e => {
   }
 });
 const up = e => {
+  lastIn = performance.now();
   // 指をほとんど動かさずに離したらタップ：近くの人を選ぶ（何もない所なら選択を外す）
   if (e.type === 'pointerup' && tap && tap.id === e.pointerId && tap.moved < 8 && performance.now() - tap.t < 500) { const q = rel(e); select(pickPed(q.x, q.y)); }
   tap = null;
   pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
 };
 cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-cv.addEventListener('wheel', e => { e.preventDefault(); const p = rel(e); zoomAt(p.x, p.y, K * Math.exp(-e.deltaY * .0015)); }, { passive: false });
+cv.addEventListener('wheel', e => { e.preventDefault(); lastIn = performance.now(); const p = rel(e); zoomAt(p.x, p.y, K * Math.exp(-e.deltaY * .0015)); }, { passive: false });
 
 const bind = (id, out, key, fmt) => {
   const el = $(id), o = $(out);
