@@ -180,6 +180,11 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
       <p>歩道を走る自転車。人が多いところでは歩く速さまで落とし、人をよけて進みます。</p>
     </div>
     <div class="row">
+      <label for="inTaxi">タクシーを呼ぶ人 <output id="oTaxi">2%</output></label>
+      <input id="inTaxi" type="range" min="0" max="10" step="1" value="2">
+      <p>歩道のはしで手を上げてタクシーを止める人。空車が近づくと手前の車線で止まり、乗って去ります。</p>
+    </div>
+    <div class="row">
       <label for="inGreen">歩行者信号の青 <output id="oGreen">20秒</output></label>
       <input id="inGreen" type="range" min="6" max="40" step="1" value="20">
       <p>短くすると渡りきれない人が増え、角の人だまりが大きくなります。</p>
@@ -288,7 +293,7 @@ const SKIN = ['#EBC7A4','#D9AA84','#C08A60','#F2D5B8','#A97452'];
 const HAIR = ['#1E1B1A','#2B2420','#3A2E26','#5A4636','#1B1E24','#7B6A5A'];
 const STEP = 1 / 30;
 
-const P = { rate: 200, green: 20, vary: 40, space: 0.25, color: 'clothes', heat: false, speed: 1, paused: false, rush: false, bike: 8 };
+const P = { rate: 200, green: 20, vary: 40, space: 0.25, color: 'clothes', heat: false, speed: 1, paused: false, rush: false, bike: 8, taxi: 2 };
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -810,8 +815,9 @@ function spawn() {
   p.legs = planRoute(o.b, to.b, st, exitPt); p.li = 0; p.planned = p.legs.length;
   if (p.legs.length) setLeg(p); else p.st = 'leave';
   p.aimT = 0; p.sj = (++spawnSeq * .618) % 1; p.gl = null; p.gt = null; p.beh = '';   // ねらいの更新時刻をずらす
-  p.cur = Math.sqrt(hash(spawnSeq, 3.1, 8.7)); p.pcT = simT + p.sj * .5; p.seen = null; p.gz = null; p.fear = 0;   // 好奇心（0〜1）、次に気づく時刻、見たスポット、見物の予約、犬へのこわさ（0〜1）
+  p.cur = Math.sqrt(hash(spawnSeq, 3.1, 8.7)); p.pcT = simT + p.sj * .5; p.seen = null; p.gz = null; p.fear = 0; p.hail = null; p.taxi = null; p.entT = 0;   // 好奇心（0〜1）、次に気づく時刻、見たスポット、見物の予約、犬へのこわさ（0〜1）
   if (via) { p.willBike = true; startVia(p, via); }
+  if (!wantB && P.taxi > 0 && Math.random() < P.taxi / 100) hailInit(p, o);   // 歩く人の一部はタクシーを呼ぶ（0%のときは乱数を使わない）
   peds.push(p);
 }
 
@@ -1005,7 +1011,7 @@ function buildCarPath(k, rc, outer, canTurn) {
   return { path, cross };
 }
 const ENTRY = [];
-for (const rc of RC) for (const k of [0, 1, 2, 3]) for (const outer of [true, false]) ENTRY.push({ k, rc, outer, next: rand(0, 4), last: null });
+for (const rc of RC) for (const k of [0, 1, 2, 3]) for (const outer of [true, false]) ENTRY.push({ k, rc, outer, next: rand(0, 4), last: null, want: false });
 let cars = [], carId = 0, removedCars = 0;
 const CAR_COLS = ['#F4F5F7', '#F4F5F7', '#1F2329', '#AEB4BC', '#7D8692', '#33507A', '#8E2F35', '#E9E3D3'];
 // 車の種類：p は出てくる割合
@@ -1022,11 +1028,14 @@ const VEH = [
 function newCar(e) {
   let r = Math.random(), v = VEH[0];
   for (const t of VEH) { if (r < t.p) { v = t; break; } r -= t.p; }
+  const want = hailers.length > 0;   // 呼んでいる人がいるときは、タクシーを増やし、空車にもしやすくする（乱数は使わない）
+  if ((want && v.kind === 'car' && hash(carId, 9.1, 2.3) < .2) || e.want) v = VEH.find(t => t.kind === 'taxi');   // 呼ぶ人の縁を走る車線には、次の1台を空車にする
   const base = { kind: v.kind, len: rand(v.len[0], v.len[1]), w: v.w, col: pick(v.cols), helm: pick(['#F4F5F7', '#1F2329', '#C62F2F', '#E9C23A']) };
   if (v.kind === 'bike') { const of = pickOutfit(); base.rcl = of.cl; base.rpt = of.pt; base.rsk = pick(SKIN); } // 乗っている人の服と肌の色
-  const { path, cross } = buildCarPath(e.k, e.rc, e.outer, base.kind !== 'bus');
+  const { path, cross } = buildCarPath(e.k, e.rc, e.outer, base.kind !== 'bus' && !e.want);   // 呼ばれて出す空車はまっすぐ走る
   // 車体の後ろ端が走路の始点にくる位置から出発する（前端を始点に置くと、長いバスが前の車にめり込んだ姿で現れていた）
-  const c = { ...base, path, cross, ci: 0, s: base.len, v: 6, cx: 0, cy: 0, hx: 1, hy: 0, id: carId++ };
+  const c = { ...base, path, cross, ci: 0, s: base.len, v: 6, cx: 0, cy: 0, hx: 1, hy: 0, id: carId++, vacant: false, bs: 0, lo: 0, doorA: 0, fare: null, pickS: null, skip: null, scT: 0, sigR: 0, stuckT: 0 };   // タクシー用の項目も全部の車に持たせる（形をそろえて速く）
+  if (c.kind === 'taxi') c.vacant = e.want || hash(c.id, 5.3, 1.7) < (want ? .9 : .6);   // 空車か実車かは車の番号から決める（乱数は使わない）
   carPose(c);
   return c;
 }
@@ -1037,6 +1046,7 @@ function carPose(c) {
   const fi = clamp(Math.round(c.s / DS), 0, n), bi = clamp(Math.round((c.s - c.len) / DS), 0, n);
   const mi = clamp(Math.round((c.s - c.len / 2) / DS), 0, n);
   c.cx = P.X[mi]; c.cy = P.Y[mi];
+  if (c.lo) { c.cx += c.lo * P.HY[mi]; c.cy -= c.lo * P.HX[mi]; }   // タクシーが縁石がわへ寄る
   const hx = P.X[fi] - P.X[bi], hy = P.Y[fi] - P.Y[bi], d = Math.hypot(hx, hy);
   if (d > .5) { c.hx = hx / d; c.hy = hy / d; } else { c.hx = P.HX[mi]; c.hy = P.HY[mi]; }
 }
@@ -1228,7 +1238,7 @@ function perceive(p, ctx) {
   if (simT < p.pcT) return;
   p.pcT = simT + .4 + p.sj * .2;
   // 信号待ちを始めた人・横断中・避難中・駐輪場の用事の最中は対象外
-  if (!p.inside || p.via || (p.st === 'approach' ? p.wait != null : p.st !== 'leave')) return;
+  if (!p.inside || p.via || p.hail || (p.st === 'approach' ? p.wait != null : p.st !== 'leave')) return;
   for (const s of SPOTS) {
     if (s.b !== p.block) continue;
     const K = SPOT_KINDS[s.kind], r = K.range(s); if (!r) continue;
@@ -1385,7 +1395,7 @@ const FLEE = {
     const s = p.fdog;
     if (p.fear > FEAR_FLEE || (p.fl && p.fear > .2)) {
       if (s && !s.dead && p.inside && !p.via && p.block === s.b && (p.st === 'approach' || p.st === 'leave')) {
-        if (!p.fl) { p.fl = true; p.tk = null; if (p.gz) { p.wg = p.gz.s; p.wgc = p.gz.s.cy; relGz(p); } }   // 見物の立ち位置は手放す
+        if (!p.fl) { p.fl = true; p.tk = null; if (p.hail) hailEnd(p, true); if (p.gz) { p.wg = p.gz.s; p.wgc = p.gz.s.cy; relGz(p); } }   // 見物の立ち位置は手放す
         return true;
       }
     }
@@ -1609,8 +1619,138 @@ const GATHER = {
   }
 };
 
+/* ---------- タクシーを呼ぶ人 ---------- */
+// 歩道のはしで手を上げる人 p.hail = { x, y, nx, ny, b, gl, st: 'go'|'wait', t0, ta }（nx,ny は車道へ向かう向き）。
+// 見つけた空車は c.fare = 人, c.pickS = 止まる位置(s), c.bs = 1:寄せる 2:止まって待つ 3:ドアを開けて乗せる 4:ドアを閉めて出発。人は p.taxi = 車。手放すのは hailEnd / taxiFree だけ。
+const HAIL_T = 90, HAIL_WALK = 40, BOARD_T = 1.5, BOARD_WAIT = 12, DOOR_A = 1;   // あきらめるまで(秒)、歩いて着くまで、乗りこみ、止まってからの待ち、後ろドアの位置(車の中心から後ろへm)
+let hailers = [];
+const taxiStat = { hail: 0, pick: 0, giveup: 0, stop: 0, cancel: 0, wait: 0 };
+// 手を上げる位置：出発した街区の車道がわの縁から0.5m内がわ、交差点の中心から18m以上はなれた直線部分。出発点に近い所を好む
+function hailPoint(b, st) {
+  const B = BLOCKS[b], N = navOf(b);
+  let best = null, bs = Infinity;
+  for (const [nx, ny, on] of [[-1, 0, B.rl], [1, 0, B.rr], [0, -1, B.rt], [0, 1, B.rb]]) {
+    if (!on) continue;
+    const v = nx !== 0, lo = v ? B.y0 : B.x0, hi = v ? B.y1 : B.x1, e = v ? (nx < 0 ? B.x0 + .5 : B.x1 - .5) : (ny < 0 ? B.y0 + .5 : B.y1 - .5);
+    for (let a = lo + 1.5; a <= hi - 1.5; a += 1.5) {
+      if (Math.abs(a - 30) < 18 || Math.abs(a - 90) < 18) continue;
+      const dr = v ? -nx : ny;   // この縁を走る車の進む向き（軸ぞい）。街の入口から26m以上、出口まで14m以上ないと空車が間に合わない
+      if ((dr > 0 ? a + 6 : W + 6 - a) < 26 || (dr > 0 ? W + 6 - a : a + 6) < 14) continue;
+      const x = v ? e : a, y = v ? a : e;
+      if (N.cl[cellIdx(N, x, y)] !== 2 || keepOut(x, y, b) || SPOTS.some(s => s.b === b && Math.hypot(s.x - x, s.y - y) < 5) || hailers.some(q => q.hail.b === b && Math.hypot(q.hail.x - x, q.hail.y - y) < 7)) continue;
+      const sc = Math.hypot(x - st.x, y - st.y) + Math.random() * 12;
+      if (sc < bs) { bs = sc; best = { x, y, nx, ny }; }
+    }
+  }
+  return best;
+}
+// この縁（左がわが縁石になる向き）を走る外側の車線の入口
+function hailEntry(q) {
+  const v = q.nx !== 0, hx = q.ny, hy = -q.nx, k = HEAD.findIndex(a => a[0] === hx && a[1] === hy), at = v ? q.x : q.y;
+  let rc = RC[0]; for (const c0 of RC) if (Math.abs(at - c0) < Math.abs(at - rc)) rc = c0;
+  return ENTRY.find(e => e.k === k && e.rc === rc && e.outer);
+}
+function hailInit(p, o) {
+  const q = hailPoint(o.b, o.pt); if (!q) return;
+  p.hail = { x: q.x, y: q.y, nx: q.nx, ny: q.ny, b: o.b, gl: goalPt(q.x, q.y), st: 'go', t0: simT, ta: 0, dp: 0, ent: hailEntry(q) }; p.taxi = null; p.entT = 0;
+  hailers.push(p); taxiStat.hail++;
+}
+// 人がタクシーの予約を手放す（車は空車のまま走り去る）
+function relTx(p) {
+  const c = p.taxi; if (!c) return;
+  p.taxi = null; p.entT = 0;
+  if (c.fare === p) { c.fare = null; c.pickS = null; c.bs = 0; c.skip = p; }
+}
+// 呼ぶのをやめる（あきらめた・犬から逃げた・街を出た）。up なら「あきらめた」と表示
+function hailEnd(p, up) {
+  if (!p.hail) return;
+  relTx(p); p.hail = null; p.aimT = 0; p.entT = 0;
+  const i = hailers.indexOf(p); if (i >= 0) hailers.splice(i, 1);
+  if (up) { taxiStat.giveup++; p.tmsg = 'タクシーをあきらめた'; p.tmsgT = simT + 5; }
+}
+// 車が予約を手放す（消えるとき・間に合わないとき。人はそのまま呼び続ける）
+function taxiFree(c) {
+  const p = c.fare; if (p && p.taxi === c) { p.taxi = null; p.entT = 0; }
+  c.skip = p; c.fare = null; c.pickS = null; c.bs = 0;
+}
+// 止まった車の後ろドアの横の歩道のはし（縁にそって、車のドアの位置へずらした点）
+function boardPt(c, h) {
+  const s = clamp((c.cx - c.hx * DOOR_A - h.x) * c.hx + (c.cy - c.hy * DOOR_A - h.y) * c.hy, -4, 4);
+  return { x: h.x + c.hx * s, y: h.y + c.hy * s };
+}
+// 空車が、手を上げている人を探す（0.3秒おき）。10〜120m先の自分の走路の左がわ（縁石がわ）の外側の車線ぞいで、止まる所が交差点の外なら予約する（直進・曲がったあとの先でもよい）
+function taxiScan(c) {
+  const Pp = c.path;
+  for (const p of hailers) {
+    const h = p.hail;
+    if (h.st !== 'wait' || p.taxi || c.skip === p || Math.abs(h.x - c.cx) > 120 || Math.abs(h.y - c.cy) > 120) continue;
+    let bi = -1, bd = 9;
+    for (let i = pathPt(c, c.s + 10), e = pathPt(c, c.s + 120); i <= e; i += 4) { const d = (Pp.X[i] - h.x) ** 2 + (Pp.Y[i] - h.y) ** 2; if (d < bd) { bd = d; bi = i; } }
+    if (bi < 0) continue;
+    const lat = (h.x - Pp.X[bi]) * Pp.HY[bi] - (h.y - Pp.Y[bi]) * Pp.HX[bi];   // 進行方向の左がわが正
+    if (lat < 1 || lat > 2.6) continue;
+    const ps = bi * DS + DOOR_A + c.len / 2;
+    if (ps - c.s < c.v * c.v / 6 + 1 || ps > Pp.len - 8) continue;   // ゆるやかに止まれる距離があること
+    if (c.cross.some(cr => cr.stopS < ps + 1 && cr.exitS > ps - c.len - 1)) continue;   // 止まったとき車体が交差点にかかる
+    let blocked = false;
+    for (let d = Math.max(3, ps - c.s - c.len - 3); d <= ps - c.s + 1 && !blocked; d += 2) { const i = pathPt(c, c.s + d), x = Pp.X[i], y = Pp.Y[i]; blocked = eachCarNear(x, y, o => o !== c && o.v < .3 && hitsCar(x, y, o, .8, .8)); }   // 先に止まっている車がいる
+    if (blocked) continue;
+    c.fare = p; p.taxi = c; c.pickS = ps; c.bs = 1; c.t1 = simT;
+    return;
+  }
+}
+// 予約したタクシーの進行：寄せる → 止まる → ドアを開ける → 乗せる → ドアを閉めて出発。dt は秒
+function taxiTick(c, dt) {
+  const p = c.fare;
+  if (c.bs === 1) {
+    if (simT - c.t1 > 80) taxiFree(c);   // いつまでもたどり着けない
+    else if (c.v < .2 && c.pickS - c.s < .35) { c.bs = 2; c.t2 = simT; taxiStat.stop++; }
+  } else if (c.bs === 2 || c.bs === 3) {
+    if (simT - c.t2 > BOARD_WAIT) { taxiStat.cancel++; taxiFree(c); }   // 人ごみなどで乗れないまま長いこと待った
+    else {
+      const q = boardPt(c, p.hail), d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (c.bs === 2 && d < .7) { c.bs = 3; c.t3 = simT; }
+      else if (c.bs === 3 && d < 1.2 && simT - c.t3 > BOARD_T - .4 && !p.entT) p.entT = simT;   // 乗りこむ（すっと消える）
+      if (c.bs === 3 && simT - c.t3 > BOARD_T && d < 1.2) {
+        taxiStat.pick++; taxiStat.wait += simT - p.hail.ta;
+        c.fare = null; c.pickS = null; c.vacant = false; c.bs = 4; c.t4 = simT + .9;
+        p.taxi = null; hailEnd(p, false); relVia(p); relGz(p); p.gone = true; p.goneT = simT; p.goneReason = 'taxi'; peds.splice(peds.indexOf(p), 1);
+      }
+    }
+  } else if (c.bs === 4 && simT >= c.t4) { c.bs = 0; c.sigR = simT + 2.5; }
+  // ドアの開き具合と、縁石がわへの寄り（寄せるときだけ0.45m）
+  const wl = c.bs > 1 || (c.bs === 1 && c.pickS - c.s < 10) ? .45 : 0;
+  c.doorA += clamp((c.bs === 3 ? 1 : 0) - c.doorA, -2.5 * dt, 2.5 * dt);
+  c.lo += clamp(wl - c.lo, -.3 * dt, .3 * dt);
+}
+// 手を上げて呼ぶ：着いたら車道のほうを向いて手を上げる。90秒で（歩いて着くまでは40秒で）あきらめる。タクシーが止まったら後ろドアの横へ
+const HAIL = {
+  name: 'hail',
+  want(p) {
+    const h = p.hail; if (!h) return false;
+    if ((p.st !== 'approach' && p.st !== 'leave') || !p.inside || p.block !== h.b) { hailEnd(p, false); return false; }
+    if (h.st === 'go' ? simT - h.t0 > HAIL_WALK : simT - h.ta > HAIL_T) { hailEnd(p, true); return false; }
+    return true;
+  },
+  act(p, ctx) {
+    const h = p.hail, o = ctx.o, c = p.taxi, board = c && c.bs >= 2;
+    o.sp = p.v0;
+    if (p.entT) { o.tx = p.x; o.ty = p.y; o.sp = 0; return o; }   // 乗りこむ最中はその場
+    let tx = h.x, ty = h.y;
+    if (board) { const q = boardPt(c, h); tx = q.x; ty = q.y; }
+    const d = Math.hypot(tx - p.x, ty - p.y);
+    if (h.st === 'go' && !board) {
+      if (d < .5) { h.st = 'wait'; h.ta = simT; }
+      else { p.gl = h.gl; p.gt = h; navAim(p); o.tx = p.qx; o.ty = p.qy; if (d < 2) o.sp = Math.max(.5, p.v0 * d / 2); return o; }
+    }
+    o.tx = tx; o.ty = ty; o.sp = d < .05 ? 0 : Math.min(p.v0, d * 5);
+    p.fhx = h.nx; p.fhy = h.ny;
+    return o;
+  }
+};
+
 // 上にあるものほど優先
-const BEHAVIORS = [FLEE, GATHER, TISSUE, ROUTE];
+const BEHAVIORS = [FLEE, HAIL, GATHER, TISSUE, ROUTE];
 
 /* ---------- 1ステップ ---------- */
 function step(dt) {
@@ -1638,7 +1778,7 @@ function step(dt) {
     cx.S = SIGS[p.leg ? p.leg.i : 0]; // いま渡ろうとしている交差点の信号
     if (SPOTS.length) perceive(p, cx);
     let beh = ROUTE;
-    if (SPOTS.length) for (const bh of BEHAVIORS) if (bh.want(p, cx)) { beh = bh; break; }   // 上にあるものほど優先
+    if (SPOTS.length || p.hail) for (const bh of BEHAVIORS) if (bh.want(p, cx)) { beh = bh; break; }   // 上にあるものほど優先
     p.beh = beh.name;
     if (p.fear > 0 && p.fk !== simT) p.fear = Math.max(0, p.fear - dt / 4);   // 犬が見えなくなると4秒ほどで落ち着く
     if (beh === FLEE && p.fear > .6) FLEERS[flI].push(p);
@@ -1656,7 +1796,7 @@ function step(dt) {
       sp = Math.min(sp, 4.5);
     }
     let fx = (ex * sp - p.vx) / TAU, fy = (ey * sp - p.vy) / TAU;
-    p.ex = ex; p.ey = ey; p.sp = sp; p.wt = (waiting && beh !== FLEE) || beh === GATHER;
+    p.ex = ex; p.ey = ey; p.sp = sp; p.wt = (waiting && beh !== FLEE) || beh === GATHER || beh === HAIL;
     if ((p.fear > FEAR_MILD || p.tav) && beh !== FLEE && (p.st === 'approach' || p.st === 'leave')) { spotSteer(p, ex, ey); fx += STX; fy += STY; }
 
     // 車をよける
@@ -1702,7 +1842,7 @@ function step(dt) {
     }
     const sv = Math.min(s, m);
     p.dist += sv * dt;
-    if (sv < .2) { if (p.st === 'approach' && p.wait != null) p.sigStopT += dt; else if (!p.gz) p.jamT += dt; }   // 見物で立っている時間は混雑ではない
+    if (sv < .2) { if (p.st === 'approach' && p.wait != null) p.sigStopT += dt; else if (!p.gz && p.beh !== 'hail') p.jamT += dt; }   // 見物で立っている時間は混雑ではない
     if (sample) p.trail.push(p.x, p.y, sv);
     if (p.st === 'approach' || p.st === 'leave') {
       if (!p.inside && inBlock(p.x, p.y, p.block, .2 + p.r * .5)) { p.inside = true; p.aimT = 0; }
@@ -1733,8 +1873,8 @@ function step(dt) {
       });
       p.road = blockAt(p.x, p.y) < 0;
     }
-    if (p.st === 'leave' && p.inside && (p.x < -1 || p.x > W + 1 || p.y < -1 || p.y > W + 1 || (p.to.kind === 'door' && !p.via && Math.hypot(p.x - p.exitPt.x, p.y - p.exitPt.y) < 1))) { relVia(p); relGz(p); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
-    if (simT - p.born > 600) { relVia(p); relGz(p); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
+    if (p.st === 'leave' && p.inside && (p.x < -1 || p.x > W + 1 || p.y < -1 || p.y > W + 1 || (p.to.kind === 'door' && !p.via && Math.hypot(p.x - p.exitPt.x, p.y - p.exitPt.y) < 1))) { relVia(p); relGz(p); hailEnd(p, false); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
+    if (simT - p.born > 600) { relVia(p); relGz(p); hailEnd(p, false); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
     // 歩道から車道に出た瞬間の信号を記録する
     if (p.road && !p.wasRoad && p.st === 'cross' && !p.crossEntered) {
       p.crossEntered = true;
@@ -1778,16 +1918,20 @@ function step(dt) {
     // 同じ向きに流れている車は、交差点をふさいでいるとは見なさない
     return hx === undefined || !(o.v > 1.5 && o.hx * hx + o.hy * hy > .7);
   });
+  // 呼ぶ人が出たとき（と、40秒・70秒たっても空車が来ないとき）、その縁を走る車線に次に出てくる車を空車のタクシーにする
+  for (const p of hailers) { const h = p.hail; if (!p.taxi && h.dp < 3 && simT - h.t0 > [0, 40, 70][h.dp]) { h.dp++; h.ent.want = true; } }
   for (const e of ENTRY) {
     if (simT > e.next) {
       const last = e.last;
       // 新しい車の長さぶん＋3m、前の車との間が空いてから出す
       const c = newCar(e);
-      if (!last || !cars.includes(last) || last.s - last.len > c.len + 3) { cars.push(c); e.last = c; e.next = simT + rand(3, 9); }
+      if (!last || !cars.includes(last) || last.s - last.len > c.len + 3) { cars.push(c); e.last = c; e.next = simT + rand(3, 9); e.want = false; }
       else e.next = simT + 1;
     }
   }
+  if (hailers.length) for (const c of cars) if (c.vacant && !c.fare && simT >= (c.scT || 0)) { c.scT = simT + .3; taxiScan(c); }   // 空車は0.3秒おきに手を上げている人を探す
   for (const c of cars) {
+    if (c.kind === 'taxi' && (c.bs || c.lo || c.doorA)) taxiTick(c, dt);
     const cur = curCross(c), Pp = c.path, S = SIGS[cur ? cur.i : 0];
     // 'a' は右折の矢印信号：右折車だけ進める
     const raw = cur ? S[cur.g] : 'g', st = raw === 'a' ? (cur.turn === 'right' ? 'g' : 'r') : raw;
@@ -1819,11 +1963,13 @@ function step(dt) {
     }
     const turning = cur && cur.turn !== 'straight' && c.s > cur.stopS - 15;
     const vmax = c.kind === 'bus' ? 7 : c.kind === 'truck' ? 8 : turning ? (c.kind === 'bike' ? 6 : 5.5) : c.kind === 'bike' ? 10 : 9;
-    const vt = Math.min(vmax, Math.sqrt(2 * 5 * Math.max(0, lim - .2)));
+    const sd = c.bs === 1 ? Math.max(0, c.pickS - c.s) : c.bs > 1 ? 0 : Infinity;   // タクシーが人を乗せる位置までの距離（ゆるやかに止まる）
+    const vt = Math.min(vmax, Math.sqrt(2 * 5 * Math.max(0, lim - .2)), Math.sqrt(2 * 3 * sd));
     const acc = c.kind === 'bike' ? 4.5 : c.kind === 'bus' || c.kind === 'truck' ? 2.2 : 3;
     c.v = c.v < vt ? Math.min(vt, c.v + acc * dt) : Math.max(vt, c.v - 9 * dt);
     let mv = c.v * dt;
     if (lim < Infinity) mv = Math.min(mv, Math.max(0, lim));
+    if (sd < Infinity) mv = Math.min(mv, sd);
     // 動いた結果ほかの車と重なるなら、この瞬間は動かない
     const near = [];
     eachCarNear(c.cx, c.cy, o => { if (o !== c && Math.abs(o.cx - c.cx) < 12 && Math.abs(o.cy - c.cy) < 12) near.push(o); return false; });
@@ -1837,7 +1983,8 @@ function step(dt) {
   for (const c of cars) {
     const cur = c.cross[c.ci];
     if (cur && c.v < .05 && c.s > cur.stopS && c.s < cur.exitS) c.stuckT = (c.stuckT || 0) + dt; else c.stuckT = 0;
-    if (c.stuckT > 45 && !roadPed(c.cx + c.hx * (c.len / 2 + 2), c.cy + c.hy * (c.len / 2 + 2), 2.5)) { c.gone = true; removedCars++; }
+    if (c.stuckT > 45 && !c.bs && !roadPed(c.cx + c.hx * (c.len / 2 + 2), c.cy + c.hy * (c.len / 2 + 2), 2.5)) { c.gone = true; removedCars++; }
+    if (c.fare && (c.gone || c.s >= c.path.len)) taxiFree(c);
   }
   cars = cars.filter(c => !c.gone && c.s < c.path.len);
 }
@@ -2138,6 +2285,8 @@ function vlights(o, L, Wd, z, front) {
 }
 // 曲がる交差点の30m手前から曲がり終えるまで、曲がる側を点滅させる（左側通行なので左折は左側）。点灯中は -1(左)/+1(右)、消灯中は 0
 function blinkSide(c) {
+  // タクシーが人を乗せるとき：寄せるあいだは左、止まっているあいだは両側（ハザード）、走り出すときは右
+  if ((c.bs && (c.bs > 1 || c.pickS - c.s < 40)) || c.sigR > simT) { const on = Math.floor(simT * 3 + c.id * .37) % 2 === 0; return on ? (c.bs > 1 ? 2 : c.bs === 1 ? -1 : 1) : 0; }
   const cr = c.cross[c.ci];
   if (!cr || cr.turn === 'straight' || c.s <= cr.stopS - 30 || c.s >= cr.exitS) return 0;
   return Math.floor(simT * 3 + c.id * .37) % 2 === 0 ? (cr.turn === 'left' ? -1 : 1) : 0;
@@ -2158,6 +2307,7 @@ function vblinker(o, L, Wd, z, side, lite) {
     ctx.globalAlpha = 1;
   }
 }
+const vblink2 = (o, L, Wd, z, bs, lite) => { if (bs === 2) { vblinker(o, L, Wd, z, -1, lite); vblinker(o, L, Wd, z, 1, lite); } else vblinker(o, L, Wd, z, bs, lite); };   // bs が 2 ならハザード（両側）
 // 前と後ろに分かれた乗り物は、奥にある部分から先に描く
 function vBackToFront(o, front, back) { if (o.hx + o.hy > 0) { back(); front(); } else { front(); back(); } }
 // バイクに乗る人：歩いている人と同じ描き方（角の丸い胴、線の手足、丸い頭、輪郭線）。
@@ -2196,6 +2346,14 @@ function drawRider(c, phase) {
   ctx.fillStyle = vsh(c.rsk, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1], hr, 0, 6.283); ctx.fill(); ctx.strokeStyle = ol; ctx.lineWidth = lw; ctx.stroke();
   ctx.fillStyle = vsh(c.helm, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1] - hr * .05, hr * 1.18, Math.PI * .92, Math.PI * 2.08); ctx.closePath(); ctx.fill(); ctx.stroke();
 }
+// タクシーの左うしろのドア：蝶番は前の縁で、開くほど外（歩道がわ）へふれる。薄い板（下が車体色、上が窓）
+function vdoor(c, o, Wd) {
+  const t = c.doorA * 1.2, lx = o.hy, ly = -o.hx, ln = .9;
+  const bx = o.cx - o.hx * .1 + lx * (Wd / 2 - .02), by = o.cy - o.hy * .1 + ly * (Wd / 2 - .02);
+  const fx = bx + (-o.hx * Math.cos(t) + lx * Math.sin(t)) * ln, fy = by + (-o.hy * Math.cos(t) + ly * Math.sin(t)) * ln;
+  vpoly([[bx, by, .35], [fx, fy, .35], [fx, fy, .85], [bx, by, .85]], vsh(c.col, .86));
+  vpoly([[bx, by, .85], [fx, fy, .85], [fx, fy, 1.25], [bx, by, 1.25]], GLASS);
+}
 function drawCar(c) {
   for (const q of quad(c.cx, c.cy, c.hx, c.hy, c.len, c.w)) if (q[0] < 0 || q[0] > W || q[1] < 0 || q[1] > W) return;
   poly(quad(c.cx + .15, c.cy + .15, c.hx, c.hy, c.len + .2, c.w + .2).map(q => [q[0], q[1], .01]), dark ? 'rgba(0,0,0,.35)' : 'rgba(10,15,25,.2)');
@@ -2206,7 +2364,7 @@ function drawCar(c) {
   if (K < 3.5) {
     const h = { bus: 2.9, truck: 2.9, van: 1.85, kei: 1.65, bike: 1.45 }[c.kind] || 1.45;
     vfrustum(o, L, c.kind === 'bike' ? .5 : Wd, .2, h, L - .4, (c.kind === 'bike' ? .5 : Wd) - .3, 0, c.col);
-    if (bs) vblinker(o, L - .4, c.kind === 'bike' ? .5 : Wd, h * .35, bs, true);
+    if (bs) vblink2(o, L - .4, c.kind === 'bike' ? .5 : Wd, h * .35, bs, true);
     vOL = null; return;
   }
   if (c.kind === 'bike') {
@@ -2223,7 +2381,7 @@ function drawCar(c) {
     if (o.hx + o.hy > 0) vbox(vat(o, L / 2 - .02), .06, Wd - .4, 1.2, 2.6, GLASS, { noTop: true });
     vbox(vat(o, -.6), 2.4, 1.3, 2.9, 3.15, '#C9CFD6');
     vlights(o, L, Wd, .6, true); vlights(o, L, Wd, .6, false);
-    if (bs) vblinker(o, L, Wd, .6, bs);
+    if (bs) vblink2(o, L, Wd, .6, bs);
   } else if (c.kind === 'truck') {
     vwheels(o, Wd, [L / 2 - 1, -L / 2 + 1.1, -L / 2 + 2.1], .45, .36);
     const cabO = vat(o, L / 2 - .95);
@@ -2235,17 +2393,29 @@ function drawCar(c) {
       vbox(vat(o, -1.05), L - 2.13, Wd + .02, 1.05, 1.35, c.col, { noTop: true });
     });
     vlights(o, L, Wd - .1, .65, true); vlights(o, L, Wd, .7, false);
-    if (bs) vblinker(o, L, Wd - .1, .65, bs);
+    if (bs) vblink2(o, L, Wd - .1, .65, bs);
   } else {
     // 乗用車・軽自動車・ミニバン・タクシー・パトカー：下の台と、窓を斜めにした車室
     const sp = { kei: [.3, .9, 1.65, .7, .55, -.08], van: [.32, .98, 1.85, .78, .62, -.14], police: [.32, .85, 1.45, .58, .37, -.2] }[c.kind] || [.32, .85, 1.42, .58, .36, -.18];
+    const dh = c.kind === 'taxi' && c.doorA > .02, dv = o.hy - o.hx > 0;   // 開いたドア（左がわが奥なら車体より先に、手前なら後に描く）
+    if (dh && !dv) vdoor(c, o, Wd);
     vwheels(o, Wd, [L / 2 - .85, -L / 2 + .85], .32);
     vfrustum(o, L, Wd, sp[0], sp[1], L - .35, Wd - .08, 0, c.kind === 'police' ? '#1F2329' : c.col, { top: c.col });
     if (c.kind === 'police') vfrustum(o, L - .1, Wd + .01, .62, sp[1], L - .35, Wd - .07, 0, '#F4F5F7');
     vfrustum(vat(o, L * sp[5] * .3), L * sp[3], Wd - .16, sp[1], sp[2], L * sp[4], Wd - .42, -L * .03, GLASS, { top: c.kind === 'police' ? '#F4F5F7' : c.col });
     vlights(o, L - .35, Wd - .08, sp[1] - .25, true); vlights(o, L - .35, Wd - .08, sp[1] - .25, false);
-    if (bs) vblinker(o, L - .35, Wd - .08, sp[1] - .25, bs);
-    if (c.kind === 'taxi') vbox(vat(o, -L * .06), .38, .62, sp[2], sp[2] + .22, '#F7F2E0');
+    if (bs) vblink2(o, L - .35, Wd - .08, sp[1] - .25, bs);
+    if (c.kind === 'taxi') {
+      // 屋根の行灯：空車は明るく、実車は暗く。空車は運転席の前に赤い「空車」ランプも点ける
+      const df = vDF; if (c.vacant) vDF = 1;
+      vbox(vat(o, -L * .06), .38, .62, sp[2], sp[2] + .22, c.vacant ? '#FFF6C8' : '#8C8774');
+      if (c.vacant && o.hx + o.hy > 0) {
+        vbox(vat(o, L * .21, -Wd * .27), .07, .3, sp[1] + .02, sp[1] + .14, '#FF3B30', { top: '#FF7A6B' });
+        if (dark) { const q = I(vat(o, L * .21, -Wd * .27).cx, vat(o, L * .21, -Wd * .27).cy, sp[1] + .08); ctx.globalAlpha = .3; ctx.fillStyle = '#FF3B30'; ctx.beginPath(); ctx.arc(q[0], q[1], K * .3, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; }
+      }
+      vDF = df;
+    }
+    if (dh && dv) vdoor(c, o, Wd);
     if (c.kind === 'police') { vbox(vat(o, -L * .06, -.2), .32, .34, sp[2], sp[2] + .18, '#E5484D'); vbox(vat(o, -L * .06, .2), .32, .34, sp[2], sp[2] + .18, '#3C6FE0'); }
   }
   vOL = null;
@@ -2267,6 +2437,7 @@ function drawPed(p) {
   const col = pedColor(p);
   if (p.bike) { drawBike(p, q, z0, col); return; }
   if (k < 4) { ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.6, 2, zf * 1.6); return; }
+  if (p.entT) ctx.globalAlpha = clamp(1 - (simT - p.entT) / .4, .05, 1);   // タクシーに乗りこむ：すっと消える
   ctx.fillStyle = 'rgba(15,20,30,.2)';
   ctx.beginPath(); ctx.ellipse(X, Y, k * .3, k * .15, 0, 0, 6.283); ctx.fill();
   if (p === sel) { ctx.strokeStyle = theme.amber; ctx.lineWidth = Math.max(2, k * .12); ctx.beginPath(); ctx.ellipse(X, Y, k * .55, k * .28, 0, 0, 6.283); ctx.stroke(); }
@@ -2290,7 +2461,8 @@ function drawPed(p) {
   // 片側ずつ：脚は前後に、腕は脚と反対に振る
   const leg = sd => limb(W3(0, sd * .09, .78), W3(sd * st, sd * .09, .06), legW, legCol);
   const hup = p.gz && p.gz.st === 'watch' && p.gz.s.state === 'finale';   // 見せ場の拍手：手を上げる
-  const arm = sd => limb(W3(0, sd * .23, 1.36), hup ? W3(.05, sd * .3, 1.9 + .08 * Math.sin(simT * 9 + p.ph + sd)) : W3(-sd * st * 1.1, sd * .25, .88), armW, armCol);
+  const hail = p.hail && p.beh === 'hail' && p.hail.st === 'wait' && !(p.taxi && p.taxi.bs > 1);   // タクシーを呼ぶ：来る車の側の腕をまっすぐ上げて、軽くふる
+  const arm = sd => limb(W3(0, sd * .23, 1.36), hup ? W3(.05, sd * .3, 1.9 + .08 * Math.sin(simT * 9 + p.ph + sd)) : hail && sd === 1 ? W3(.04, .3 + .05 * Math.sin(simT * 5 + p.ph), 1.98 + .04 * Math.sin(simT * 2.5 + p.ph)) : W3(-sd * st * 1.1, sd * .25, .88), armW, armCol);
   const nearSide = (nx + ny) > 0 ? 1 : -1, farSide = -nearSide;  // 見る人に近い側
   leg(farSide); arm(farSide);
   // 胴：角の丸い四角（元の形）。手足だけが進む向きに合わせて動く
@@ -2310,6 +2482,7 @@ function drawPed(p) {
   if (hx + hy < -.3) ctx.arc(hq[0], hq[1], hr * 1.02, 0, 6.283);
   else ctx.arc(hq[0], hq[1] - hr * .1, hr * 1.04, Math.PI, 0);
   ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /* ---------- スポットの描画 ---------- */
@@ -2684,7 +2857,7 @@ const footZ = (x, y) => blockAt(x, y) >= 0 ? .16 : .02;
 function routePts(p) {
   // 道さがしは0.3秒ごとにやり直し、その間は先頭(いまの位置)だけ更新する
   const rc = p.rc;
-  if (rc && simT - rc.t < .3 && rc.st === p.st && rc.li === p.li && rc.in === p.inside && rc.v === p.via && rc.b === p.block && rc.g === p.gz) { rc.pts[0][0] = p.x; rc.pts[0][1] = p.y; return rc.pts; }
+  if (rc && simT - rc.t < .3 && rc.h === p.hail && rc.st === p.st && rc.li === p.li && rc.in === p.inside && rc.v === p.via && rc.b === p.block && rc.g === p.gz) { rc.pts[0][0] = p.x; rc.pts[0][1] = p.y; return rc.pts; }
   const pts = [[p.x, p.y]];
   let cur = { x: p.x, y: p.y };
   const add = q => { pts.push([q.x, q.y]); cur = q; };
@@ -2692,7 +2865,8 @@ function routePts(p) {
   const legsFrom = (legs, from) => {
     for (let j = from; j < legs.length; j++) { const L = legs[j]; walk(L.fromB, L.tgt, L.gl); add(L.dst); add(L.ent); }
   };
-  if (p.st === 'refuge') {
+  if (p.hail && p.inside && !p.gone) walk(p.block, p.hail, p.hail.gl);   // タクシーを呼ぶ人は、手を上げる場所まで（そのあとはタクシー）
+  else if (p.st === 'refuge') {
     add(p.ref); legsFrom(p.nextLegs || [], 0); walk(p.exitB, p.exitPt, p.to.gl);
   } else if (p.st === 'cross') {
     add(p.dst); add(p.leg.ent); legsFrom(p.legs, p.li + 1); walk(p.exitB, p.exitPt, p.to.gl);
@@ -2710,7 +2884,7 @@ function routePts(p) {
       else walk(p.block, p.exitPt, p.to.gl);
     }
   }
-  p.rc = { t: simT, st: p.st, li: p.li, in: p.inside, v: p.via, b: p.block, g: p.gz, pts };
+  p.rc = { t: simT, h: p.hail, st: p.st, li: p.li, in: p.inside, v: p.via, b: p.block, g: p.gz, pts };
   return pts;
 }
 const SPD_COL = ['#E5484D', '#F2B134', '#33C48D'];
@@ -2813,8 +2987,9 @@ function updInfo() {
   const left = p.st === 'leave' || p.gone ? 0 : p.st === 'refuge' ? (p.nextLegs || []).length : p.legs.length - p.li;
   $('infoRoute').innerHTML = `<i style="background:${placeCol(p.from)}"></i>${placeName(p.from)}から<i style="background:${placeCol(p.to)}"></i>${placeName(p.to)}へ（横断${p.crossed}回済み、残り${left}回）`;
   let state, now = p.st === 'approach' ? 0 : p.st === 'cross' || p.st === 'refuge' ? 1 : 2;
-  if (p.gone) { state = p.to.kind === 'door' ? `${placeName(p.to)}に着きました` : '街を出ました'; now = 3; }
+  if (p.gone) { state = p.goneReason === 'taxi' ? 'タクシーに乗って出発しました' : p.to.kind === 'door' ? `${placeName(p.to)}に着きました` : '街を出ました'; now = 3; }
   else if (p.beh === 'flee') state = `犬から逃げている（こわさ${Math.round(p.fear * 100)}%）`;
+  else if (p.hail && p.beh === 'hail') state = p.entT ? 'タクシーに乗りこんでいる' : p.taxi && p.taxi.bs > 1 ? 'タクシーが止まった。ドアの横へ向かっている' : p.hail.st === 'go' ? 'タクシーを呼びに道ぎわへ向かっている' : `タクシーを呼んでいる（${Math.floor(simT - p.hail.ta)}秒）`;
   else if (p.gz) state = SPOT_KINDS[p.gz.s.kind].say(p);
   else if (p.tmsgT > simT) state = p.tmsg;
   else if (p.beh === 'tissue') state = 'ティッシュをもらいに寄っている';
@@ -2858,6 +3033,7 @@ function reset() {
   select(null);
   while (SPOTS.length) removeSpot(SPOTS[0]);
   FLEERS[0].length = FLEERS[1].length = 0;
+  hailers = []; for (const k in taxiStat) taxiStat[k] = 0;
   peds = []; waits = []; badEntries = 0; overflow = 0; simT = 0; spawnAcc = 0; sigIdx = 0; sigT = 0; heat.fill(0);
   for (const R of RACKS) for (const s of R.slots) { s.res = false; s.bike = Math.random() < .4 ? { bc: pick(BIKE_COLS), taken: false } : null; } // 駐輪場に自転車をまばらに停めておく
   cars = []; for (const e of ENTRY) { e.next = rand(0, 3); e.last = null; }
@@ -2903,6 +3079,7 @@ const bind = (id, out, key, fmt) => {
 };
 bind('inRate', 'oRate', 'rate', v => v + '人/分');
 bind('inBike', 'oBike', 'bike', v => v + '%');
+bind('inTaxi', 'oTaxi', 'taxi', v => v + '%');
 bind('inGreen', 'oGreen', 'green', v => v + '秒');
 bind('inVary', 'oVary', 'vary', v => v + '%');
 bind('inSpace', 'oSpace', 'space', v => v.toFixed(2) + 'm');
