@@ -1263,7 +1263,7 @@ function vfrustum(o, L, Wd, z0, z1, Lt, Wt, sh, col, opt) {
   const N = [[hx, hy], [nx, ny], [-hx, -hy], [-nx, -ny]];
   for (let i = 0; i < 4; i++) {
     const ux = N[i][0], uy = N[i][1];
-    if (ux + uy <= .001) continue; // 見る人の方を向いた面だけ描く
+    if (ux + uy <= .001 || (opt.noEnds && i % 2 === 0)) continue; // 見る人の方を向いた面だけ描く（noEnds：前後の面は描かない）
     const j = (i + 1) % 4, base = opt.face ? opt.face(i) : col;
     vpoly([[B[i][0], B[i][1], z0], [B[j][0], B[j][1], z0], [T[j][0], T[j][1], z1], [T[i][0], T[i][1], z1]], vsh(base, ux > uy ? .96 : .74));
   }
@@ -1281,6 +1281,28 @@ function vlights(o, L, Wd, z, front) {
   if ((front ? 1 : -1) * (o.hx + o.hy) <= 0) return;
   const col = front ? '#FFF4C2' : '#E5484D';
   for (const s of [-1, 1]) vbox(vat(o, a, s * (Wd / 2 - .28)), .06, .3, z, z + .16, col, { top: col });
+}
+// 曲がる交差点の30m手前から曲がり終えるまで、曲がる側を点滅させる（左側通行なので左折は左側）。点灯中は -1(左)/+1(右)、消灯中は 0
+function blinkSide(c) {
+  const cr = c.cross[c.ci];
+  if (!cr || cr.turn === 'straight' || c.s <= cr.stopS - 30 || c.s >= cr.exitS) return 0;
+  return Math.floor(simT * 3 + c.id * .37) % 2 === 0 ? (cr.turn === 'left' ? -1 : 1) : 0;
+}
+// ウインカー：前後の角の橙色ランプ（見えている面だけ）と、曲がる側の側面マーカー。暗いときは光のにじみも足す
+function vblinker(o, L, Wd, z, side, lite) {
+  const AMB = '#FFA51F', df = vDF, fv = o.hx + o.hy > 0, bv = o.hx + o.hy < 0;
+  vDF = 1;
+  if (fv) vbox(vat(o, L / 2 + .01, side * (Wd / 2 - .07)), .06, .12, z, z + .16, AMB, { top: '#FFC15A' });
+  if (bv) vbox(vat(o, -L / 2 - .01, side * (Wd / 2 - .07)), .06, .12, z, z + .16, AMB, { top: '#FFC15A' });
+  vDF = df;
+  if (lite) return;
+  // 側面は法線 (nx,ny)=side>0 なら (-hy,hx)、side<0 なら (hy,-hx)。nx+ny>0 のとき見える
+  if (side * (o.hx - o.hy) > 0) { vDF = 1; vbox(vat(o, L / 2 - .55, side * (Wd / 2 + .01)), .28, .04, z, z + .1, AMB, { top: '#FFC15A' }); vDF = df; }
+  if (dark) {
+    ctx.globalAlpha = .35; ctx.fillStyle = AMB;
+    for (const a of [fv ? L / 2 : null, bv ? -L / 2 : null]) if (a !== null) { const v = vat(o, a, side * (Wd / 2 - .07)), q = I(v.cx, v.cy, z + .08); ctx.beginPath(); ctx.arc(q[0], q[1], K * .35, 0, 6.283); ctx.fill(); }
+    ctx.globalAlpha = 1;
+  }
 }
 // 前と後ろに分かれた乗り物は、奥にある部分から先に描く
 function vBackToFront(o, front, back) { if (o.hx + o.hy > 0) { back(); front(); } else { front(); back(); } }
@@ -1325,11 +1347,12 @@ function drawCar(c) {
   poly(quad(c.cx + .15, c.cy + .15, c.hx, c.hy, c.len + .2, c.w + .2).map(q => [q[0], q[1], .01]), dark ? 'rgba(0,0,0,.35)' : 'rgba(10,15,25,.2)');
   vDF = dark ? .65 : 1;
   vOL = dark ? '#05070A' : '#1A1F28';
-  const o = { cx: c.cx, cy: c.cy, hx: c.hx, hy: c.hy }, L = c.len, Wd = c.w;
+  const o = { cx: c.cx, cy: c.cy, hx: c.hx, hy: c.hy }, L = c.len, Wd = c.w, bs = blinkSide(c);
   // 街全体を表示しているときは小さすぎて細部が見えないので、台1つだけにして軽くする
   if (K < 3.5) {
     const h = { bus: 2.9, truck: 2.9, van: 1.85, kei: 1.65, bike: 1.45 }[c.kind] || 1.45;
     vfrustum(o, L, c.kind === 'bike' ? .5 : Wd, .2, h, L - .4, (c.kind === 'bike' ? .5 : Wd) - .3, 0, c.col);
+    if (bs) vblinker(o, L - .4, c.kind === 'bike' ? .5 : Wd, h * .35, bs, true);
     vOL = null; return;
   }
   if (c.kind === 'bike') {
@@ -1337,13 +1360,16 @@ function drawCar(c) {
     drawRider(c, 'far');
     vfrustum(o, L - .4, .42, .35, .8, L - .9, .34, .1, c.col);
     drawRider(c, 'near');
+    if (bs) { const df = vDF; vDF = 1; if (o.hx + o.hy > 0) vbox(vat(o, L / 2 - .35, bs * .32), .1, .08, .85, .95, '#FFA51F', { top: '#FFC15A' }); else vbox(vat(o, -L / 2 + .3, bs * .2), .1, .08, .7, .8, '#FFA51F', { top: '#FFC15A' }); vDF = df; }
   } else if (c.kind === 'bus') {
     vwheels(o, Wd, [L / 2 - 1.9, -L / 2 + 2.4], .5, .36);
     vbox(o, L, Wd, .32, 2.9, c.col, { top: '#E9EDF0' });
-    vbox(vat(o, -.25), L - 1.6, Wd + .02, 1.45, 2.45, GLASS, { noTop: true });
-    vbox(vat(o, L / 2 - .02), .06, Wd - .4, 1.2, 2.6, GLASS);
+    // 窓の帯は車体より短いので、前後の面が屋根の上に透けて見えないよう側面だけ描く。前の窓も前が見えるときだけ
+    vbox(vat(o, -.25), L - 1.6, Wd + .02, 1.45, 2.45, GLASS, { noTop: true, noEnds: true });
+    if (o.hx + o.hy > 0) vbox(vat(o, L / 2 - .02), .06, Wd - .4, 1.2, 2.6, GLASS, { noTop: true });
     vbox(vat(o, -.6), 2.4, 1.3, 2.9, 3.15, '#C9CFD6');
     vlights(o, L, Wd, .6, true); vlights(o, L, Wd, .6, false);
+    if (bs) vblinker(o, L, Wd, .6, bs);
   } else if (c.kind === 'truck') {
     vwheels(o, Wd, [L / 2 - 1, -L / 2 + 1.1, -L / 2 + 2.1], .45, .36);
     const cabO = vat(o, L / 2 - .95);
@@ -1355,6 +1381,7 @@ function drawCar(c) {
       vbox(vat(o, -1.05), L - 2.13, Wd + .02, 1.05, 1.35, c.col, { noTop: true });
     });
     vlights(o, L, Wd - .1, .65, true); vlights(o, L, Wd, .7, false);
+    if (bs) vblinker(o, L, Wd - .1, .65, bs);
   } else {
     // 乗用車・軽自動車・ミニバン・タクシー・パトカー：下の台と、窓を斜めにした車室
     const sp = { kei: [.3, .9, 1.65, .7, .55, -.08], van: [.32, .98, 1.85, .78, .62, -.14], police: [.32, .85, 1.45, .58, .37, -.2] }[c.kind] || [.32, .85, 1.42, .58, .36, -.18];
@@ -1363,6 +1390,7 @@ function drawCar(c) {
     if (c.kind === 'police') vfrustum(o, L - .1, Wd + .01, .62, sp[1], L - .35, Wd - .07, 0, '#F4F5F7');
     vfrustum(vat(o, L * sp[5] * .3), L * sp[3], Wd - .16, sp[1], sp[2], L * sp[4], Wd - .42, -L * .03, GLASS, { top: c.kind === 'police' ? '#F4F5F7' : c.col });
     vlights(o, L - .35, Wd - .08, sp[1] - .25, true); vlights(o, L - .35, Wd - .08, sp[1] - .25, false);
+    if (bs) vblinker(o, L - .35, Wd - .08, sp[1] - .25, bs);
     if (c.kind === 'taxi') vbox(vat(o, -L * .06), .38, .62, sp[2], sp[2] + .22, '#F7F2E0');
     if (c.kind === 'police') { vbox(vat(o, -L * .06, -.2), .32, .34, sp[2], sp[2] + .18, '#E5484D'); vbox(vat(o, -L * .06, .2), .32, .34, sp[2], sp[2] + .18, '#3C6FE0'); }
   }
