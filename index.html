@@ -1147,6 +1147,9 @@ const BLD_STYLE = [
   { h: 9, col: '#C2B19C' }, { h: 5, col: '#AFC3CF' }, { h: 2.6, col: '#D8DDE3', stripe: '#2E8B6A' }
 ];
 const BLD = BLOCKS.map((B, i) => ({ x0: B.b0x, y0: B.b0y, x1: B.b1x, y1: B.b1y, ...BLD_STYLE[i] }));
+for (const b of BLD) b.k = (b.x0 + b.x1 + b.y0 + b.y1) / 2;
+// 建物は大きいので中心だけで比べると、手前の人が建物に隠れたり奥の人が壁の上に描かれたりする。画面で重なる人は建物の手前か奥かで順番を決める
+function bldKey(k, x, y) { const u = x - y; for (const b of BLD) { if (u < b.x0 - b.y1 - 1 || u > b.x1 - b.y0 + 1) continue; if (x >= b.x1 || y >= b.y1) { if (k <= b.k) k = b.k + .01; } else if (k >= b.k) k = b.k - .01; } return k; }
 function hash(a, b, c) { const s = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453; return s - Math.floor(s); }
 function drawBuilding(b) {
   const f = dark ? .5 : 1;
@@ -1464,7 +1467,7 @@ function draw() {
   if (P.heat) drawHeat();
   const S = sig();
   objs.length = 0;
-  for (const b of BLD) objs.push({ k: (b.x0 + b.x1 + b.y0 + b.y1) / 2, t: 0, o: b });
+  for (const b of BLD) objs.push({ k: b.k, t: 0, o: b });
   for (const p of POLES) objs.push({ k: p.x + p.y, t: 1, o: p });
   const cr = [];
   carDrawKeys();
@@ -1486,7 +1489,7 @@ function draw() {
         else if (k >= c.k) k = c.k - .01;
       }
     }
-    objs.push({ k, t: 3, o: p });
+    objs.push({ k: bldKey(k, p.x, p.y), t: 3, o: p });
   }
   objs.sort((a, b) => a.k - b.k);
   for (const o of objs) {
