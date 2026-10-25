@@ -351,24 +351,40 @@ const RC = [30, 90];                             // 道路の中心線
 const SX = [-1, 1, -1, 1], SY = [-1, -1, 1, 1];  // 交差点から見た角：北西, 北東, 南西, 南東
 const IXS = [];
 for (const cy of RC) for (const cx of RC) IXS.push({ cx, cy });
-const XB = [[0, 24], [36, 84], [96, 120]];
+// 道路の寸法：道路の幅・車線・停止線・交差点の箱・横断歩道・右折レーンは、すべてここから決める（ほかの場所に数値を直書きしない）。
+// 道路は中心線から左右に RH（15m幅）。中心線の両がわに、進行方向ごとに「右折レーン／内側／外側」の3車線（幅2.4〜2.6m）がならぶ。
+// 車線の位置 LN_* は中心線から、進行方向の左がわへの距離（左側通行）。右折レーンは向かいの向きの右折レーンと中心線で背中合わせ（それぞれの交差点の手前だけ使い、そのほかは導流帯）。
+// 導流帯は片がわ（0〜MH）ずつ、向きごとに別のもの：次の交差点が近づくと右折レーンになり、前の交差点を出たところでは斜線のまま残る。
+const RH = 7.5;                                      // 道路の半幅（中心線から縁石まで）。交差点の箱の半径でもある
+const MH = 2.4;                                      // 導流帯の半幅（片がわ）＝右折レーンの幅。その外がわの線が、右折レーンと内側車線のさかい（車線は幅2.4〜2.6m）
+const LN_RT = MH / 2, LN_IN = MH + 1.25, LN_OUT = 6.25;   // 車線の中心：右折専用(1.2)・内側(3.65)・外側(6.25。外がわに0.05m、バス(幅2.4m)でも縁石にかからない)
+const LN_LINE = (LN_IN + LN_OUT) / 2;                // 内側と外側のさかいの線（4.95）
+const SWK = 8;                                       // 歩道の幅
+const CWK0 = RH + 1.5, CWK1 = CWK0 + 4, CW_PAD = .7;  // 横断歩道の帯（交差点の中心から。箱の縁から1.5m、奥行き4m）、帯の端から待つ人までのあき（角から待つ人までの距離は12mの道のときと同じ）
+const SL = CWK1 + 1, SL_T = .4;                      // 停止線（中心から14m、線の太さ）。車の前端はここで止まる
+const RT_STORE = 23, RT_TAPER = 10;                  // 右折レーン：停止線からのたまり、そのさきのすりつけ（テーパー）。合わせて33m＝停止線から、1つ前の交差点の横断歩道のはしまで
+const RT_ARROW = [5, 17];                            // 右折の矢印：停止線から矢印の根もとまで(m)
+const CORNER_R = RH + SWK + .5;                      // 横断待ちの人がたまる角（交差点の中心から）
+const ROAD_NEAR = RH + 1;                            // 道路の中心線から、車のそばとみなす距離
+const PAD = 6;                                       // 車の入口・出口が街の外にはみ出す距離
+const XB = [[0, RC[0] - RH], [RC[0] + RH, RC[1] - RH], [RC[1] + RH, W]];   // 街区の範囲（道路にはさまれた3本）：[0,22.5] [37.5,82.5] [97.5,120]
 const BLOCK_NAME = ['北西', '北', '北東', '西', '中央', '東', '南西', '南', '南東'];
 const SIDE_NAME = ['北', '東', '南', '西'];
 const DEST_COL = ['#4C9EEB', '#F2B134', '#E5596E', '#33C48D'];
 const BLOCKS = [];
 for (let by = 0; by < 3; by++) for (let bx = 0; bx < 3; bx++) {
-  const [x0, x1] = XB[bx], [y0, y1] = XB[by], SWK = 8;
+  const [x0, x1] = XB[bx], [y0, y1] = XB[by];
   const rl = bx > 0, rr = bx < 2, rt = by > 0, rb = by < 2; // 道路に面している辺
   BLOCKS.push({ bx, by, x0, x1, y0, y1, rl, rr, rt, rb,
     b0x: rl ? x0 + SWK : x0, b1x: rr ? x1 - SWK : x1, b0y: rt ? y0 + SWK : y0, b1y: rb ? y1 - SWK : y1 });
 }
-const bIdx = v => v <= 24 ? 0 : v >= 36 && v <= 84 ? 1 : v >= 96 ? 2 : -1;
+const bIdx = v => v <= XB[0][1] ? 0 : v >= XB[1][0] && v <= XB[1][1] ? 1 : v >= XB[2][0] ? 2 : -1;
 function blockAt(x, y) { const bx = bIdx(x), by = bIdx(y); return bx < 0 || by < 0 ? -1 : by * 3 + bx; }
 function inBlock(x, y, b, m) {
   const B = BLOCKS[b];
   return (B.rl ? x >= B.x0 + m : x >= -5) && (B.rr ? x <= B.x1 - m : x <= W + 5) && (B.rt ? y >= B.y0 + m : y >= -5) && (B.rb ? y <= B.y1 - m : y <= W + 5);
 }
-const nearRoad = (x, y) => Math.abs(x - 30) < 7 || Math.abs(x - 90) < 7 || Math.abs(y - 30) < 7 || Math.abs(y - 90) < 7;
+const nearRoad = (x, y) => Math.abs(x - RC[0]) < ROAD_NEAR || Math.abs(x - RC[1]) < ROAD_NEAR || Math.abs(y - RC[0]) < ROAD_NEAR || Math.abs(y - RC[1]) < ROAD_NEAR;
 function blockIxs(b) {
   const B = BLOCKS[b], r = [];
   for (const iy of [B.by - 1, B.by]) for (const ix of [B.bx - 1, B.bx]) if (ix >= 0 && ix < 2 && iy >= 0 && iy < 2) r.push(iy * 2 + ix);
@@ -512,8 +528,8 @@ const cellIdx = (N, x, y) => clamp(Math.floor((y - N.oy) / NC), 0, N.ny - 1) * N
 const GOALS = new Map();
 function goalOf(k, rs, ex) { let g = GOALS.get(k); if (!g) GOALS.set(k, g = { k, rs, ex: ex || null }); return g; }
 function rectL(i, c, a0, a1, b0, b1) { const P = L2W(i, c, a0, b0), Q = L2W(i, c, a1, b1); return [Math.min(P.x, Q.x), Math.min(P.y, Q.y), Math.max(P.x, Q.x), Math.max(P.y, Q.y)]; }
-const goalCurb = (i, c, type) => goalOf(`curb:${i}:${c}:${type}`, [type === 'H' ? rectL(i, c, 8, 11, 6.5, 7) : type === 'V' ? rectL(i, c, 6.5, 7, 8, 11) : rectL(i, c, 6.5, 7.7, 6.5, 7.7)]);
-const goalCorner = (i, c) => goalOf(`corner:${i}:${c}`, [rectL(i, c, 7, 13, 7, 13)]);
+const goalCurb = (i, c, type) => goalOf(`curb:${i}:${c}:${type}`, [type === 'H' ? rectL(i, c, CWK0 + CW_PAD, CWK1 - CW_PAD, RH + .5, RH + 1) : type === 'V' ? rectL(i, c, RH + .5, RH + 1, CWK0 + CW_PAD, CWK1 - CW_PAD) : rectL(i, c, RH + .5, RH + 1.7, RH + .5, RH + 1.7)]);
+const goalCorner = (i, c) => goalOf(`corner:${i}:${c}`, [rectL(i, c, RH + 1, RH + SWK - 1, RH + 1, RH + SWK - 1)]);
 const goalPt = (x, y) => { const X = Math.round(x * 2) / 2, Y = Math.round(y * 2) / 2; return goalOf(`pt:${X}:${Y}`, [[X - .25, Y - .25, X + .25, Y + .25]]); };
 DOORS.forEach((d, di) => { d.gl = goalOf('door:' + di, [[d.x - .5, d.y - .5, d.x + .5, d.y + .5]]); });
 GATES.forEach((g, gi) => {
@@ -708,9 +724,9 @@ let waits = [];
 const MAXP = 4000, BLOCK_CAP = 300;
 const blockLoad = new Array(9).fill(0);
 function curbPoint(i, c, type) {
-  if (type === 'H') return L2W(i, c, rand(8.2, 10.8), 6.75);
-  if (type === 'V') return L2W(i, c, 6.75, rand(8.2, 10.8));
-  return L2W(i, c, 6.75 + rand(0, .7), 6.75 + rand(0, .7));
+  if (type === 'H') return L2W(i, c, rand(CWK0 + CW_PAD, CWK1 - CW_PAD), RH + .75);
+  if (type === 'V') return L2W(i, c, RH + .75, rand(CWK0 + CW_PAD, CWK1 - CW_PAD));
+  return L2W(i, c, RH + .75 + rand(0, .7), RH + .75 + rand(0, .7));
 }
 // 出発した街区から行き先の街区まで、横断の少ない近道を選ぶ
 function planRoute(b0, b1, from, to) {
@@ -746,7 +762,7 @@ function planRoute(b0, b1, from, to) {
     L.tgt = curbPoint(L.i, L.c, L.type);
     L.dst = curbPoint(L.i, L.d, L.type);
     const I0 = IXS[L.i], a = (L.dst.x - I0.cx) * SX[L.d], b = (L.dst.y - I0.cy) * SY[L.d];
-    L.ent = L2W(L.i, L.d, Math.max(7.2, a), Math.max(7.2, b));
+    L.ent = L2W(L.i, L.d, Math.max(RH + 1.2, a), Math.max(RH + 1.2, b));
   }
   return best;
 }
@@ -870,6 +886,13 @@ function eachCarNear(x, y, fn) {
   return false;
 }
 
+// (x, y) に車体（まわりに mg の余裕）をおいたとき、c 以外の車にかかるか。hx,hy があれば、同じ向きに流れている車は数えない
+const carHitAt = (x, y, c, mg, hx, hy) => eachCarNear(x, y, o => {
+  if (o === c || Math.abs(o.cx - x) > 7 || Math.abs(o.cy - y) > 7) return false;
+  if (!hitsCar(x, y, o, mg, mg)) return false;
+  // 同じ向きに流れている車は、交差点をふさいでいるとは見なさない
+  return hx === undefined || !(o.v > 1.5 && o.hx * hx + o.hy * hy > .7);
+});
 // まっすぐ歩いたときに車にふさがれるか
 function pathBlocked(x0, y0, x1, y1) {
   const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / .5);
@@ -885,7 +908,7 @@ function startRefuge(p) {
   let best = 0, bd = Infinity, bp = null;
   for (let c = 0; c < 4; c++) {
     const a = (p.x - I0.cx) * SX[c], b = (p.y - I0.cy) * SY[c];
-    const q = L2W(L.i, c, clamp(a, 7, 13), clamp(b, 7, 13));
+    const q = L2W(L.i, c, clamp(a, RH + 1, RH + SWK - 1), clamp(b, RH + 1, RH + SWK - 1));
     // 車でふさがれている角は、遠いものとして扱う
     const d = Math.hypot(q.x - p.x, q.y - p.y) + (pathBlocked(p.x, p.y, q.x, q.y) ? 25 : 0);
     if (d < bd) { bd = d; best = c; bp = q; }
@@ -987,53 +1010,77 @@ function makePath(segs) {
   return { X, Y, HX, HY, len: (n - 1) * DS };
 }
 // 入口から出口までの走路を作る。交差点ごとに直進・左折・右折を決め、停止線の位置を記録する
-function buildCarPath(k, rc, outer, canTurn) {
-  const segs = [], cross = [];
-  let h = HEAD[k], L = [h[1], -h[0]], o = outer ? 4.4 : 1.6;
-  let px = h[0] ? (h[0] > 0 ? -6 : W + 6) : rc + L[0] * o, py = h[1] ? (h[1] > 0 ? -6 : W + 6) : rc + L[1] * o;
+// 走路を描く座標：交差点の中心から見て、進行方向に a（手前は負）、進行方向の左に l。
+// 右折する車は、交差点の手前 SL+RT_STORE+RT_TAPER から RT_TAPER の間に、l を LN_IN から LN_RT へなめらかに移す（すりつけ）。noRt のときは右折しない
+const smooth = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+const LT_OUT = 1.4, LT_PULL = .6;   // 左折：箱の外へのはみ出し、縁石の角から内がわへ引く量
+function buildCarPath(k, rc, outer, canTurn, noRt, plan) {
+  const k0 = k, outer0 = outer, segs = [], cross = [], made = [];
+  let h = HEAD[k], L = [h[1], -h[0]], o = outer ? LN_OUT : LN_IN;
+  let px = h[0] ? (h[0] > 0 ? -PAD : W + PAD) : rc + L[0] * o, py = h[1] ? (h[1] > 0 ? -PAD : W + PAD) : rc + L[1] * o;
   let turns = 0;
   for (let guard = 0; guard < 6; guard++) {
-    h = HEAD[k]; L = [h[1], -h[0]]; o = outer ? 4.4 : 1.6;
+    h = HEAD[k]; L = [h[1], -h[0]]; o = outer ? LN_OUT : LN_IN;
     let ni = -1, nd = Infinity;
     IXS.forEach((I0, i) => {
       const along = (I0.cx - px) * h[0] + (I0.cy - py) * h[1], lat = (I0.cx - px) * L[0] + (I0.cy - py) * L[1];
-      if (along > 7 && Math.abs(lat + o) < .5 && along < nd) { nd = along; ni = i; }
+      if (along > RH && Math.abs(lat + o) < .5 && along < nd) { nd = along; ni = i; }
     });
     if (ni < 0) {
-      const ex = h[0] ? (h[0] > 0 ? W + 6 : -6) : px, ey = h[1] ? (h[1] > 0 ? W + 6 : -6) : py;
+      const ex = h[0] ? (h[0] > 0 ? W + PAD : -PAD) : px, ey = h[1] ? (h[1] > 0 ? W + PAD : -PAD) : py;
       segs.push([[px, py], [ex, ey]]);
       break;
     }
     const I0 = IXS[ni], cx = I0.cx, cy = I0.cy;
+    const at = (a, l) => [cx + h[0] * a + L[0] * l, cy + h[1] * a + L[1] * l];   // 交差点の中心から (a, l) の点
     let turn = 'straight';
-    if (canTurn && turns < 2) { const t = Math.random(); if (outer && t < .3) turn = 'left'; else if (!outer && t < .3) turn = 'right'; }
-    cross.push({ i: ni, k, turn, g: h[0] ? 'ew' : 'ns', stopPt: [cx - h[0] * 12.5 + L[0] * o, cy - h[1] * 12.5 + L[1] * o] });
+    const pl = plan && plan[cross.length], ov = !!(pl && pl.ov);   // plan：作りなおすときは、前に決めた曲がり方と、右折レーンを使うか(ov：使わない)をそのまま使う
+    if (pl) turn = pl.turn;
+    else if (canTurn && turns < 2) { const t = Math.random(); if (outer && t < .3) turn = 'left'; else if (!outer && t < .3 && !noRt) turn = 'right'; }
+    const cr = { i: ni, k, turn, g: h[0] ? 'ew' : 'ns', stopPt: at(-SL, turn === 'right' && !ov ? LN_RT : o) };
+    cross.push(cr); made.push({ turn, ov, dec: pl && pl.dec });
     if (turn === 'straight') {
-      const nx = cx + h[0] * 7 + L[0] * o, ny = cy + h[1] * 7 + L[1] * o;
-      segs.push([[px, py], [nx, ny]]); px = nx; py = ny;
+      const q = at(RH + 1, o);
+      segs.push([[px, py], q]); px = q[0]; py = q[1];
     } else if (turn === 'left') {
-      const P0 = [cx - h[0] * 7.4 + L[0] * 4.4, cy - h[1] * 7.4 + L[1] * 4.4], Pc = [cx - h[0] * 4.4 + L[0] * 4.4, cy - h[1] * 4.4 + L[1] * 4.4], P1 = [cx - h[0] * 4.4 + L[0] * 7.4, cy - h[1] * 4.4 + L[1] * 7.4];
+      const P0 = at(-RH - LT_OUT, LN_OUT), Pc = at(-LN_OUT + LT_PULL, LN_OUT - LT_PULL), P1 = at(-LN_OUT, RH + LT_OUT);
       segs.push([[px, py], P0]); segs.push([P0, Pc, P1]); px = P1[0]; py = P1[1];
       k = (k + 3) % 4; outer = true; turns++;
     } else {
-      const P0 = [cx - h[0] * 6 + L[0] * 1.6, cy - h[1] * 6 + L[1] * 1.6], Pc = [cx + h[0] * 1.6 + L[0] * 1.6, cy + h[1] * 1.6 + L[1] * 1.6], P1 = [cx + h[0] * 1.6 - L[0] * 6, cy + h[1] * 1.6 - L[1] * 6];
-      segs.push([[px, py], P0]); segs.push([P0, Pc, P1]); px = P1[0]; py = P1[1];
+      const a0 = -(SL + RT_STORE + RT_TAPER), a1 = -(SL + RT_STORE), aS = (px - cx) * h[0] + (py - cy) * h[1];
+      const lat = a => LN_IN + (LN_RT - LN_IN) * smooth((a - a0) / (a1 - a0));
+      const aT = Math.max(aS, a0);   // 入口がすりつけの途中より先なら（街のはしの進入路）、入口から右折レーンに入っている
+      if (aS > a0) { const q = at(aS, lat(aS)); px = q[0]; py = q[1]; }
+      // cr.rt：右折レーンのある進入路の右折。cr.dec：右折レーンに入るか決めた結果（'lane' 入る／'ov' あふれて内側の車線のまま）。入口が右折レーンの中なら、はじめから入っている
+      cr.rt = true; cr.ov = ov; cr.dec = ov ? 'ov' : aS > a0 ? 'lane' : pl && pl.dec;
+      cr.tpPt = ov ? [at(aT, LN_IN), at(a1, LN_IN)] : [at(aT, lat(aT)), at(a1, LN_RT)];
+      let q = [px, py];
+      if (ov) {   // あふれた右折車：内側の車線のまま停止線まで行き、そこから右折する
+        const P0 = at(-RH, LN_IN), Pc = at(LN_IN, LN_IN), P1 = at(LN_IN, -RH);
+        segs.push([q, P0]); segs.push([P0, Pc, P1]); px = P1[0]; py = P1[1];
+      } else {
+        if (aS < a0) { q = at(a0, LN_IN); segs.push([[px, py], q]); }
+        for (let a = aT; a < a1 - 1e-6; a += .5) { const r = at(Math.min(a1, a + .5), lat(Math.min(a1, a + .5))); segs.push([q, r]); q = r; }
+        const P0 = at(-RH, LN_RT), Pc = at(LN_IN, LN_RT), P1 = at(LN_IN, -RH);
+        segs.push([q, P0]); segs.push([P0, Pc, P1]); px = P1[0]; py = P1[1];
+      }
       k = (k + 1) % 4; outer = false; turns++;
     }
   }
   const path = makePath(segs), n = path.X.length;
   let from = 0;
+  const nearIdx = (pt, f) => { let bi = f, bd = Infinity; for (let i = f; i < n; i++) { const d = Math.hypot(path.X[i] - pt[0], path.Y[i] - pt[1]); if (d < bd) { bd = d; bi = i; } else if (d > bd + 5) break; } return bi; };
   for (const cr of cross) {
-    let bi = from, bd = Infinity;
-    for (let i = from; i < n; i++) { const d = Math.hypot(path.X[i] - cr.stopPt[0], path.Y[i] - cr.stopPt[1]); if (d < bd) { bd = d; bi = i; } else if (d > bd + 5) break; }
+    const bi = nearIdx(cr.stopPt, from);
     cr.stopS = bi * DS;
+    if (cr.rt) { cr.tp0 = nearIdx(cr.tpPt[0], from) * DS; cr.tp1 = nearIdx(cr.tpPt[1], from) * DS; delete cr.tpPt; }
     const I0 = IXS[cr.i];
     let ei = n - 1;
-    for (let i = bi + 8; i < n; i++) if (Math.abs(path.X[i] - I0.cx) > 12.5 || Math.abs(path.Y[i] - I0.cy) > 12.5) { ei = i; break; }
+    for (let i = bi + 8; i < n; i++) if (Math.abs(path.X[i] - I0.cx) > SL || Math.abs(path.Y[i] - I0.cy) > SL) { ei = i; break; }
     cr.exitS = ei * DS;
     from = ei;
   }
-  return { path, cross };
+  return { path, cross, plan: made, bd: { k: k0, rc, outer: outer0 } };
 }
 const ENTRY = [];
 for (const rc of RC) for (const k of [0, 1, 2, 3]) for (const outer of [true, false]) ENTRY.push({ k, rc, outer, next: rand(0, 4), last: null, want: false, bus: false });
@@ -1050,17 +1097,18 @@ const VEH = [
   { kind: 'bus', p: .05, len: [10.5, 10.5], w: 2.4, cols: ['#3C8D6E', '#2F6FB0', '#C9553F'] },
   { kind: 'bike', p: .16, len: [2.1, 2.2], w: .8, cols: ['#C62F2F', '#1F2329', '#2F5FA8', '#E8E3D6', '#2E8B6A', '#E9C23A'] }
 ];
-function newCar(e) {
+function newCar(e, noRt) {
   let r = Math.random(), v = VEH[0];
   for (const t of VEH) { if (r < t.p) { v = t; break; } r -= t.p; }
+  if (v.kind === 'bus' && !e.outer) v = VEH[0];   // バス(幅2.4m)は外側の車線だけ（内側と外側の車線の中心は2.6m）
   const want = hailers.length > 0;   // 呼んでいる人がいるときは、タクシーを増やし、空車にもしやすくする（乱数は使わない）
   if (e.bus) v = VEH.find(t => t.kind === 'bus');   // 時刻表のバス
   else if ((want && v.kind === 'car' && hash(carId, 9.1, 2.3) < .2) || e.want) v = VEH.find(t => t.kind === 'taxi');   // 呼ぶ人の縁を走る車線には、次の1台を空車にする
   const base = { kind: v.kind, len: rand(v.len[0], v.len[1]), w: v.w, col: pick(v.cols), helm: pick(['#F4F5F7', '#1F2329', '#C62F2F', '#E9C23A']) };
   if (v.kind === 'bike') { const of = pickOutfit(); base.rcl = of.cl; base.rpt = of.pt; base.rsk = pick(SKIN); } // 乗っている人の服と肌の色
-  const { path, cross } = buildCarPath(e.k, e.rc, e.outer, base.kind !== 'bus' && !e.want);   // 呼ばれて出す空車はまっすぐ走る
+  const { path, cross, plan, bd } = buildCarPath(e.k, e.rc, e.outer, base.kind !== 'bus' && !e.want, noRt);   // 呼ばれて出す空車はまっすぐ走る
   // 車体の後ろ端が走路の始点にくる位置から出発する（前端を始点に置くと、長いバスが前の車にめり込んだ姿で現れていた）
-  const c = { ...base, path, cross, ci: 0, s: base.len, v: 6, cx: 0, cy: 0, hx: 1, hy: 0, id: carId++, vacant: false, bs: 0, lo: 0, doorA: 0, fare: null, pickS: null, skip: null, scT: 0, sigR: 0, stuckT: 0, stop: null, load: 0, nAl: 0, al: 0, nb: 0, cur: null, tn: 0, tLast: 0, act: 0, done: false, doorR: 0, sched: false, tz: 0, dr: null, rdr: null };   // タクシー用の項目も全部の車に持たせる（形をそろえて速く）
+  const c = { ...base, path, cross, plan, bd, ci: 0, s: base.len, v: 6, cx: 0, cy: 0, hx: 1, hy: 0, id: carId++, vacant: false, bs: 0, lo: 0, doorA: 0, fare: null, pickS: null, skip: null, scT: 0, sigR: 0, stuckT: 0, stop: null, load: 0, nAl: 0, al: 0, nb: 0, cur: null, tn: 0, tLast: 0, act: 0, done: false, doorR: 0, sched: false, tz: 0, dr: null, rdr: null };   // タクシー用の項目も全部の車に持たせる（形をそろえて速く）
   if (c.kind === 'bus') {   // バスの乗客（乱数は使わない）：はじめから乗っている人と、次のバス停で降りる人
     c.stop = BSTOPS.find(s => s.ent === e) || null; c.sched = e.bus;
     c.load = Math.floor(hash(c.id, 3.3, 7.7) * 7); c.nAl = Math.floor(hash(c.id, 4.7, 1.3) * (Math.min(c.load, 5) + 1));
@@ -1068,6 +1116,12 @@ function newCar(e) {
   if (c.kind === 'taxi') c.vacant = e.want || hash(c.id, 5.3, 1.7) < (want ? .9 : .6);   // 空車か実車かは車の番号から決める（乱数は使わない）
   carPose(c);
   return c;
+}
+// 入口で出てくる車の体と、そのすぐ先にほかの車がいるか
+function spawnBlocked(c) {
+  const P = c.path;
+  for (let d = -c.len; d <= 8; d += 1) { const i = pathPt(c, c.s + d), x = P.X[i], y = P.Y[i]; if (carHitAt(x, y, c, c.w / 2 + .3)) return true; }
+  return false;
 }
 function curCross(c) { while (c.ci < c.cross.length && c.s >= c.cross[c.ci].exitS) c.ci++; return c.cross[c.ci] || null; }
 function pathPt(c, s) { return clamp(Math.round(s / DS), 0, c.path.X.length - 1); }
@@ -1106,6 +1160,27 @@ function oncomingThreat(c, cur, st) {
   }
   return false;
 }
+
+// 右折レーンに入るか決める（すりつけの少し手前で1回）。右折レーンに入る予定の車（すでに入った車・これから入る車）を、長さとすき間ぶんたして、
+// 自分がたまり（RT_STORE）に収まり、移る先に止まっている車がいなければ入る。そうでないなら、右折レーンは使わず内側の車線のまま停止線へ向かう
+// （あふれ。走路をその右折の「ov」版に作りなおす）。決めたあとは、移る先の車（右折レーンの前の車）には先読みでついていく
+function decideRt(c, j) {
+  const cr = c.cross[j];
+  let q = 0;
+  for (const o of cars) {
+    if (o === c) continue;
+    for (let m = o.ci; m <= o.ci + 1 && m < o.cross.length; m++) { const oc = o.cross[m]; if (oc.rt && oc.dec === 'lane' && oc.i === cr.i && oc.k === cr.k && o.s < oc.stopS + .5) q += o.len + LC_GAP; }
+  }
+  // 移る先（すりつけの走路）に、止まっている（またはゆっくり動いている）車がいないこと（速い車は先に行くので数えない）
+  let free = q + c.len <= RT_STORE + 1.5;
+  const P = c.path, mg = c.w / 2 + .2;
+  for (let s = cr.tp0 - 2; free && s <= cr.tp1 - 1; s += .75) { const i = pathPt(c, s); if (eachCarNear(P.X[i], P.Y[i], o => o !== c && o.v < 3 && hitsCar(P.X[i], P.Y[i], o, mg, mg))) free = false; }
+  if (free) { cr.dec = 'lane'; c.plan[j].dec = 'lane'; return; }
+  const plan = c.plan.map(p => ({ ...p })); plan[j].ov = true; plan[j].dec = 'ov';
+  const nb = buildCarPath(c.bd.k, c.bd.rc, c.bd.outer, false, false, plan);   // 走路の前の部分は同じなので、いまの位置のまま乗りかえられる
+  c.path = nb.path; c.cross = nb.cross; c.plan = nb.plan;
+}
+const LC_GAP = 2.6;   // 列の中で前の車との間にできるすき間（先読みの余裕ぶんを含む、およそ2.5m）
 
 /* 人どうしの力：1組ずつ1回だけ計算し、両方に配る（計算量を半分にする） */
 const CUT2 = 4; // 2mより離れた人の影響は無視できるほど小さい
@@ -1227,7 +1302,7 @@ const ROUTE = { name: 'route', want: () => true, act: routeAct };
 // 見る人は p.gz = { s, slot, st, ts, t1, gl }（slot は予約する立ち位置。なければ null）。手放すのは relGz(p) だけ。
 const SPOTS = []; let spotSeq = 0;
 const hitR = (x, y, h, r) => x + h > r[0] && x - h < r[2] && y + h > r[1] && y - h < r[3];
-const inCornerSq = (x, y, m) => IXS.some(I0 => Math.abs(x - I0.cx) < 14.5 + m && Math.abs(y - I0.cy) < 14.5 + m);   // 横断待ちの人がたまる角
+const inCornerSq = (x, y, m) => IXS.some(I0 => Math.abs(x - I0.cx) < CORNER_R + m && Math.abs(y - I0.cy) < CORNER_R + m);   // 横断待ちの人がたまる角
 // 置けるか調べる。置けないときは理由の文を返す（置けるなら ''）
 function spotCheck(kind, x, y) {
   const K = SPOT_KINDS[kind], b = blockAt(x, y), h = K.hs + K.mg;
@@ -1654,10 +1729,11 @@ const GATHER = {
 /* ---------- タクシーを呼ぶ人 ---------- */
 // 歩道のはしで手を上げる人 p.hail = { x, y, nx, ny, b, gl, st: 'go'|'wait', t0, ta }（nx,ny は車道へ向かう向き）。
 // 見つけた空車は c.fare = 人, c.pickS = 止まる位置(s), c.bs = 1:寄せる 2:止まって待つ 3:ドアを開けて乗せる 4:ドアを閉めて出発。人は p.taxi = 車。手放すのは hailEnd / taxiFree だけ。
+const HAIL_CLR = SL + 5.5, HAIL_LAT = RH + .5 - LN_OUT;   // 交差点の中心からこれ以上はなれた直線部分だけ。外側の車線の中心から歩道のはしの人までの横の距離
 const HAIL_T = 90, HAIL_WALK = 40, BOARD_T = 1.5, BOARD_WAIT = 12, DOOR_A = 1;   // あきらめるまで(秒)、歩いて着くまで、乗りこみ、止まってからの待ち、後ろドアの位置(車の中心から後ろへm)
 let hailers = [];
 const taxiStat = { hail: 0, pick: 0, giveup: 0, stop: 0, cancel: 0, wait: 0 };
-// 手を上げる位置：出発した街区の車道がわの縁から0.5m内がわ、交差点の中心から18m以上はなれた直線部分。出発点に近い所を好む
+// 手を上げる位置：出発した街区の車道がわの縁から0.5m内がわ、交差点の中心から HAIL_CLR（停止線の5.5m先）以上はなれた直線部分。出発点に近い所を好む
 function hailPoint(b, st) {
   const B = BLOCKS[b], N = navOf(b);
   let best = null, bs = Infinity;
@@ -1665,9 +1741,9 @@ function hailPoint(b, st) {
     if (!on) continue;
     const v = nx !== 0, lo = v ? B.y0 : B.x0, hi = v ? B.y1 : B.x1, e = v ? (nx < 0 ? B.x0 + .5 : B.x1 - .5) : (ny < 0 ? B.y0 + .5 : B.y1 - .5);
     for (let a = lo + 1.5; a <= hi - 1.5; a += 1.5) {
-      if (Math.abs(a - 30) < 18 || Math.abs(a - 90) < 18) continue;
+      if (Math.abs(a - RC[0]) < HAIL_CLR || Math.abs(a - RC[1]) < HAIL_CLR) continue;
       const dr = v ? -nx : ny;   // この縁を走る車の進む向き（軸ぞい）。街の入口から26m以上、出口まで14m以上ないと空車が間に合わない
-      if ((dr > 0 ? a + 6 : W + 6 - a) < 26 || (dr > 0 ? W + 6 - a : a + 6) < 14) continue;
+      if ((dr > 0 ? a + PAD : W + PAD - a) < 26 || (dr > 0 ? W + PAD - a : a + PAD) < 14) continue;
       const x = v ? e : a, y = v ? a : e;
       if (N.cl[cellIdx(N, x, y)] !== 2 || keepOut(x, y, b) || SPOTS.some(s => s.b === b && Math.hypot(s.x - x, s.y - y) < 5) || hailers.some(q => q.hail.b === b && Math.hypot(q.hail.x - x, q.hail.y - y) < 7)) continue;
       const sc = Math.hypot(x - st.x, y - st.y) + Math.random() * 12;
@@ -1720,7 +1796,7 @@ function taxiScan(c) {
     for (let i = pathPt(c, c.s + 10), e = pathPt(c, c.s + 120); i <= e; i += 4) { const d = (Pp.X[i] - h.x) ** 2 + (Pp.Y[i] - h.y) ** 2; if (d < bd) { bd = d; bi = i; } }
     if (bi < 0) continue;
     const lat = (h.x - Pp.X[bi]) * Pp.HY[bi] - (h.y - Pp.Y[bi]) * Pp.HX[bi];   // 進行方向の左がわが正
-    if (lat < 1 || lat > 2.6) continue;
+    if (lat < HAIL_LAT - 1.1 || lat > HAIL_LAT + .5) continue;
     const ps = bi * DS + DOOR_A + c.len / 2;
     if (ps - c.s < c.v * c.v / 6 + 1 || ps > Pp.len - 8) continue;   // ゆるやかに止まれる距離があること
     if (c.cross.some(cr => cr.stopS < ps + 1 && cr.exitS > ps - c.len - 1)) continue;   // 止まったとき車体が交差点にかかる
@@ -1751,7 +1827,7 @@ function taxiTick(c, dt) {
     }
   } else if (c.bs === 4 && simT >= c.t4) { c.bs = 0; c.sigR = simT + 2.5; }
   // ドアの開き具合と、縁石がわへの寄り（寄せるときだけ0.45m）
-  const wl = c.bs > 1 || (c.bs === 1 && c.pickS - c.s < 10) ? .45 : 0;
+  const wl = c.bs > 1 || (c.bs === 1 && c.pickS - c.s < 10) ? Math.min(.45, RH - .1 - LN_OUT - c.w / 2) : 0;   // 縁石に寄る量（車体が縁石にかからない範囲で）
   c.doorA += clamp((c.bs === 3 ? 1 : 0) - c.doorA, -2.5 * dt, 2.5 * dt);
   c.lo += clamp(wl - c.lo, -.3 * dt, .3 * dt);
 }
@@ -1789,10 +1865,10 @@ const BUS_MAX = 20, BUS_LOOSE = 14, BUS_GIVE = 240, BUS_BOARD = 10, BUS_CAP = 30
 const BSTOPS = [];
 function makeStop(name, k, rc, front) {
   const h = HEAD[k], l = [h[1], -h[0]], hz = h[0] !== 0, ax = front - (hz ? h[0] : h[1]) * BUS_DF;
-  const P0 = hz ? { x: ax, y: rc + l[1] * 6 } : { x: rc + l[0] * 6, y: ax };
+  const P0 = hz ? { x: ax, y: rc + l[1] * RH } : { x: rc + l[0] * RH, y: ax };
   const pt = (t, d) => ({ x: P0.x - h[0] * t + l[0] * d, y: P0.y - h[1] * t + l[1] * d });
   const rb = (t0, t1, d0, d1) => { const q = [pt(t0, d0), pt(t1, d1)]; return [Math.min(q[0].x, q[1].x), Math.min(q[0].y, q[1].y), Math.max(q[0].x, q[1].x), Math.max(q[0].y, q[1].y)]; };
-  const S = { id: BSTOPS.length, name, k, rc, hx: h[0], hy: h[1], lx: l[0], ly: l[1], hz, pt, b: blockAt(pt(0, 3).x, pt(0, 3).y), pickS: (hz ? h[0] > 0 : h[1] > 0) ? front + 6 : W + 6 - front,
+  const S = { id: BSTOPS.length, name, k, rc, hx: h[0], hy: h[1], lx: l[0], ly: l[1], hz, pt, b: blockAt(pt(0, 3).x, pt(0, 3).y), pickS: (hz ? h[0] > 0 : h[1] > 0) ? front + PAD : W + PAD - front,
     ent: ENTRY.find(e => e.k === k && e.rc === rc && e.outer), slots: [], lslots: [], q: [], loose: [], door: pt(0, .5), rdoor: pt(BUS_LEN - BUS_DF - BUS_DR, .45), pole: pt(-.9, .5),
     stat: { stop: 0, board: 0, alight: 0, giveup: 0, wait: 0 }, log: [], nextBus: 0, nsch: 0 };
   const gap = t => t + (t > 5.2 ? 1.4 : 0);   // 後ろドアの前は、降りる人が通れるようにあけておく
@@ -1909,7 +1985,7 @@ function busTick(c, dt) {
     }
   } else if (c.bs === 4 && simT >= c.t4) { c.bs = 0; c.pickS = null; c.done = true; c.sigR = simT + 2.5; }
   // ドアの開き具合（前は乗せる間ずっと、後ろは降ろす間だけ）と、縁石がわへの寄り（0.3m）
-  const wl = c.bs > 1 || (c.bs === 1 && c.pickS - c.s < 10) ? .3 : 0;
+  const wl = c.bs > 1 || (c.bs === 1 && c.pickS - c.s < 10) ? Math.min(.3, Math.max(0, RH - .05 - LN_OUT - c.w / 2)) : 0;   // 縁石に寄る量（バスは幅が広いのでほとんど寄れない）
   c.doorA += clamp((c.bs === 2 || c.bs === 3 ? 1 : 0) - c.doorA, -2.5 * dt, 2.5 * dt);
   c.doorR += clamp((c.bs === 2 && c.al > 0 ? 1 : 0) - c.doorR, -2.5 * dt, 2.5 * dt);
   c.lo += clamp(wl - c.lo, -.3 * dt, .3 * dt);
@@ -2121,20 +2197,19 @@ function step(dt) {
     }
     return false;
   };
-  const carHitAt = (x, y, c, mg, hx, hy) => eachCarNear(x, y, o => {
-    if (o === c || Math.abs(o.cx - x) > 7 || Math.abs(o.cy - y) > 7) return false;
-    if (!hitsCar(x, y, o, mg, mg)) return false;
-    // 同じ向きに流れている車は、交差点をふさいでいるとは見なさない
-    return hx === undefined || !(o.v > 1.5 && o.hx * hx + o.hy * hy > .7);
-  });
   // 呼ぶ人が出たとき（と、40秒・70秒たっても空車が来ないとき）、その縁を走る車線に次に出てくる車を空車のタクシーにする
   for (const p of hailers) { const h = p.hail; if (!p.taxi && h.dp < 3 && simT - h.t0 > [0, 40, 70][h.dp]) { h.dp++; h.ent.want = true; } }
   for (const e of ENTRY) {
     if (simT > e.next) {
       const last = e.last;
       // 新しい車の長さぶん＋3m、前の車との間が空いてから出す
-      const c = newCar(e);
-      if (!last || !cars.includes(last) || last.s - last.len > c.len + 3) { cars.push(c); e.last = c; e.next = simT + rand(3, 9); if (c.sched) e.bus = false; else e.want = false; }
+      let c = newCar(e);
+      // 街のはしの進入路は、入口から右折レーンの中。先に停まっている車にぶつかるなら、右折はやめて直進にする
+      const cr0 = c.cross[0];
+      if (cr0 && cr0.rt && cr0.tp0 <= c.len + 1 && spawnBlocked(c)) c = newCar(e, true);
+      // 右折レーンに入った車が先に行くと、直前に出した車は列の先頭ではなくなる。入口に止まっている車がいないか、実際の位置でも調べる
+      if (spawnBlocked(c)) e.next = simT + 1;
+      else if (!last || !cars.includes(last) || last.s - last.len > c.len + 3) { cars.push(c); e.last = c; e.next = simT + rand(3, 9); if (c.sched) e.bus = false; else e.want = false; }
       else e.next = simT + 1;
     }
   }
@@ -2142,6 +2217,7 @@ function step(dt) {
   for (const c of cars) {
     if (c.kind === 'taxi' && (c.bs || c.lo || c.doorA)) taxiTick(c, dt);
     else if (c.stop) { if (!c.done && !c.bs) busScan(c); if (c.bs || c.lo || c.doorA || c.doorR) busTick(c, dt); }
+    for (let j = c.ci; j < c.cross.length && j <= c.ci + 1; j++) { const r = c.cross[j]; if (r.rt && !r.dec && c.s >= r.tp0 - 3) { decideRt(c, j); break; } }   // 右折レーンに入るかを、すりつけの手前で決める
     const cur = curCross(c), Pp = c.path, S = SIGS[cur ? cur.i : 0];
     // 'a' は右折の矢印信号：右折車だけ進める
     const raw = cur ? S[cur.g] : 'g', st = raw === 'a' ? (cur.turn === 'right' ? 'g' : 'r') : raw;
@@ -2171,7 +2247,7 @@ function step(dt) {
       }
       if (block) lim = Math.min(lim, cur.stopS - c.s);
     }
-    const turning = cur && cur.turn !== 'straight' && c.s > cur.stopS - 15;
+    const turning = cur && cur.turn !== 'straight' && c.s > (cur.rt && !cur.ov ? cur.tp0 - 3 : cur.stopS - 15);   // 右折レーンへ移る車はすりつけの手前から、ほかの曲がる車は停止線の15m手前から減速
     const vmax = c.kind === 'bus' ? 7 : c.kind === 'truck' ? 8 : turning ? (c.kind === 'bike' ? 6 : 5.5) : c.kind === 'bike' ? 10 : 9;
     const sd = c.bs === 1 ? Math.max(0, c.pickS - c.s) : c.bs > 1 ? 0 : Infinity;   // タクシーが人を乗せる位置までの距離（ゆるやかに止まる）
     const vt = Math.min(vmax, Math.sqrt(2 * 5 * Math.max(0, lim - .2)), Math.sqrt(2 * 3 * sd));
@@ -2267,9 +2343,9 @@ function drawGround() {
   // 点字ブロック
   IXS.forEach((I0, i) => {
     for (let c = 0; c < 4; c++) {
-      lrect(i, c, 7.6, 11.4, 6.25, 6.6, .151, theme.tactile);
-      lrect(i, c, 6.25, 6.6, 7.6, 11.4, .151, theme.tactile);
-      lrect(i, c, 6.25, 7.3, 6.25, 7.3, .151, theme.tactile);
+      lrect(i, c, CWK0 + .1, CWK1 - .1, RH + .25, RH + .6, .151, theme.tactile);
+      lrect(i, c, RH + .25, RH + .6, CWK0 + .1, CWK1 - .1, .151, theme.tactile);
+      lrect(i, c, RH + .25, RH + 1.3, RH + .25, RH + 1.3, .151, theme.tactile);
     }
   });
   const paint = theme.paint;
@@ -2294,30 +2370,22 @@ function drawGround() {
   }
   busGround();
   ctx.globalAlpha = .9;
-  // 車線（交差点のあいだの区間）
-  const spans = [[0, RC[0] - 12.5], [RC[0] + 12.5, RC[1] - 12.5], [RC[1] + 12.5, W]];
-  for (const rc of RC) for (const [a0, a1] of spans) {
-    rect(a0, rc - .08, a1, rc + .08, 0, paint); rect(rc - .08, a0, rc + .08, a1, 0, paint);
-    for (let s = a0 + .5; s < a1 - 1; s += 5) {
-      const e = Math.min(s + 2.5, a1);
-      rect(s, rc - 3.05, e, rc - 2.95, 0, paint); rect(s, rc + 2.95, e, rc + 3.05, 0, paint);
-      rect(rc - 3.05, s, rc - 2.95, e, 0, paint); rect(rc + 2.95, s, rc + 3.05, e, 0, paint);
-    }
-  }
-  const r2 = Math.SQRT1_2;
+  // 道路の白線：進入路(i,k)ごとに、交差点の中心から見た座標 (a, l) で描く（a：進行方向、手前は負。l：進行方向の左）。
+  // 片がわの導流帯 l∈[0,MH] は、手前 RT_STORE+RT_TAPER までは斜線の導流帯、そこから右折レーンになる（すりつけは三角形の導流帯が残る）
+  const LT = .15;
+  for (let i = 0; i < IXS.length; i++) for (let k = 0; k < 4; k++) roadMarks(i, k, paint, LT);
+  const r2 = Math.SQRT1_2, nS = Math.floor((2 * RH - 1.05) / .9) + 1, t0 = -((nS - 1) * .9 + .45) / 2;
   for (const { cx, cy } of IXS) {
-    // 停止線
-    rect(cx - 12.9, cy - 5.8, cx - 12.5, cy - .2, 0, paint); rect(cx + 12.5, cy + .2, cx + 12.9, cy + 5.8, 0, paint);
-    rect(cx + .2, cy - 12.9, cx + 5.8, cy - 12.5, 0, paint); rect(cx - 5.8, cy + 12.5, cx - .2, cy + 12.9, 0, paint);
-    // 横断歩道
-    for (let t = -5.65; t < 5.7; t += .9) {
-      rect(cx - 11.5, cy + t, cx - 7.5, cy + t + .45, 0, paint); rect(cx + 7.5, cy + t, cx + 11.5, cy + t + .45, 0, paint);
-      rect(cx + t, cy - 11.5, cx + t + .45, cy - 7.5, 0, paint); rect(cx + t, cy + 7.5, cx + t + .45, cy + 11.5, 0, paint);
+    // 横断歩道（道路の幅いっぱい）
+    for (let n = 0; n < nS; n++) {
+      const t = t0 + n * .9;
+      rect(cx - CWK1, cy + t, cx - CWK0, cy + t + .45, 0, paint); rect(cx + CWK0, cy + t, cx + CWK1, cy + t + .45, 0, paint);
+      rect(cx + t, cy - CWK1, cx + t + .45, cy - CWK0, 0, paint); rect(cx + t, cy + CWK0, cx + t + .45, cy + CWK1, 0, paint);
     }
     // 斜め横断
-    for (const [x0, y0, dx, dy] of [[cx - 6, cy - 6, r2, r2], [cx + 6, cy - 6, -r2, r2]]) {
+    for (const [x0, y0, dx, dy] of [[cx - RH, cy - RH, r2, r2], [cx + RH, cy - RH, -r2, r2]]) {
       const nx = dy, ny = -dx;
-      for (let s = 1.2; s < 16.2; s += .9) {
+      for (let s = 1.2; s < RH * 2 * Math.SQRT2 - .77; s += .9) {
         const px = x0 + dx * s, py = y0 + dy * s, hw = 1.8, ht = .22;
         poly([
           [px + nx * hw - dx * ht, py + ny * hw - dy * ht], [px + nx * hw + dx * ht, py + ny * hw + dy * ht],
@@ -2327,6 +2395,77 @@ function drawGround() {
     }
   }
   ctx.globalAlpha = 1;
+}
+
+// 進入路(i,k)の路面標示。a：交差点の中心から進行方向（手前は負）、l：進行方向の左（中心線から縁石へ）。
+// 進入路ごとに、自分のがわの半分（0 ≤ l ≤ RH）を描く。中心線は重ならないよう片方の向きだけが描く
+function roadMarks(i, k, paint, LT) {
+  const I0 = IXS[i], h = HEAD[k], L = [h[1], -h[0]];
+  const A = (a, l, z) => [I0.cx + h[0] * a + L[0] * l, I0.cy + h[1] * a + L[1] * l, z || 0];
+  const qd = (a0, a1, l0, l1) => poly([A(a0, l0), A(a1, l0), A(a1, l1), A(a0, l1)], paint);
+  const hline = (a0, a1, l, w) => qd(a0, a1, l - w / 2, l + w / 2);
+  const dash = (a0, a1, l, w) => { for (let a = a0; a < a1 - 1; a += 5) qd(a, Math.min(a + 2.5, a1), l - w / 2, l + w / 2); };
+  // 手前の端：前の交差点の停止線のあたり、または街のはし
+  const prev = IXS.some(J => Math.abs(J.cx - (I0.cx - h[0] * (RC[1] - RC[0]))) < .1 && Math.abs(J.cy - (I0.cy - h[1] * (RC[1] - RC[0]))) < .1);
+  const aFar = prev ? -(RC[1] - RC[0]) + SL : -(h[0] > 0 ? I0.cx : h[0] < 0 ? W - I0.cx : h[1] > 0 ? I0.cy : W - I0.cy);
+  const a0 = -(SL + RT_STORE + RT_TAPER), a1 = -(SL + RT_STORE), aT = Math.max(a0, aFar), full = aFar >= a1;   // aT：すりつけの始まり（街のはしは、はしから右折レーン）
+  const aS = Math.max(a1, aFar);
+  // 導流帯（斜線）：斜めの縞を、範囲の多角形で切り抜いて描く
+  const hatch = pts => {
+    let amin = 1e9, amax = -1e9, lmin = 1e9, lmax = -1e9;
+    for (const [a, l] of pts) { amin = Math.min(amin, a); amax = Math.max(amax, a); lmin = Math.min(lmin, l); lmax = Math.max(lmax, l); }
+    ctx.save(); ctx.beginPath();
+    pts.forEach(([a, l], j) => { const q = A(a, l), p = I(q[0], q[1], 0); j ? ctx.lineTo(sn(p[0]), sn(p[1])) : ctx.moveTo(sn(p[0]), sn(p[1])); });
+    ctx.closePath(); ctx.clip();
+    const sl = lmax - lmin, P = 1.25, w = .45;
+    for (let a = Math.floor((amin - sl) / P) * P; a < amax; a += P) poly([A(a, lmin), A(a + w, lmin), A(a + w + sl, lmax), A(a + sl, lmax)], paint);
+    ctx.restore();
+  };
+  // 自分のがわの導流帯：右折レーンの手前（まっすぐな部分）と、すりつけの三角形
+  if (!full) {
+    if (aFar < a0) { hatch([[aFar, 0], [a0, 0], [a0, MH], [aFar, MH]]); hline(aFar, a0, MH, LT); }
+    const d = MH * (1 - (aT - a0) / (a1 - a0));
+    hatch([[aT, 0], [aT, d], [a1, 0]]);
+    // すりつけの斜めの線
+    const da = a1 - aT, dl = -d, dn = Math.hypot(da, dl), na = -dl / dn * LT / 2, nl = da / dn * LT / 2;
+    poly([A(aT + na, d + nl), A(a1 + na, 0 + nl), A(a1 - na, 0 - nl), A(aT - na, d - nl)], paint);
+    dash(aT, a1, MH, LT * .8);   // 車線変更できるところは破線
+  }
+  // 右折レーン：内側の車線とのさかいの実線（停止線まで）、矢印
+  hline(aS, -SL, MH, LT);
+  for (const t of RT_ARROW) {
+    const tip = -SL - t, tail = tip - 2.6;
+    if (tail < aS + .3) continue;
+    rtArrow(A, tail, LN_RT + .7, paint);
+  }
+  // 内側と外側の車線のさかい（破線）
+  dash(aFar + .5, -SL - 1, LN_LINE, LT * .8);
+  // 停止線
+  qd(-SL - SL_T, -SL, .2, RH - .2);
+  // 中心線（片方の向きだけが描く。街のはしへの道は、はしの側の向きが描く）
+  const edge = !prev;
+  if (k < 2 || edge) hline(aFar, -SL, 0, LT);
+  // 街のはしに向かう道の、出ていく向きのがわ（向かいの進入路が描かないところ）
+  if (edge) {
+    hatch([[aFar, -MH], [-SL, -MH], [-SL, 0], [aFar, 0]]);
+    hline(aFar, -SL, -MH, LT);
+    dash(aFar + .5, -SL - 1, -LN_LINE, LT * .8);
+  }
+}
+// 右折の矢印：まっすぐ進んでから右（-l）へ曲がる。a0：矢印の後ろ、l0：矢印の左端
+function rtArrow(A, a0, l0, paint) {
+  const w = .13, st = 1.6, R = .7, ex = .2, hd = .6, hw = .45;
+  const c = [[a0, l0], [a0 + st, l0]];
+  for (let j = 1; j <= 8; j++) { const f = j / 8 * Math.PI / 2; c.push([a0 + st + R * Math.sin(f), l0 - R * (1 - Math.cos(f))]); }
+  c.push([a0 + st + R, l0 - R - ex]);
+  const Lp = [], Rp = [];
+  for (let j = 0; j < c.length; j++) {
+    const p = c[Math.max(0, j - 1)], q = c[Math.min(c.length - 1, j + 1)], da = q[0] - p[0], dl = q[1] - p[1], n = Math.hypot(da, dl) || 1, na = -dl / n * w, nl = da / n * w;
+    Lp.push([c[j][0] + na, c[j][1] + nl]); Rp.push([c[j][0] - na, c[j][1] - nl]);
+  }
+  poly([...Lp, ...Rp.reverse()].map(([a, l]) => A(a, l)), paint);
+  const e = c[c.length - 1];
+  poly([A(e[0] - hw, e[1]), A(e[0] + hw, e[1]), A(e[0], e[1] - hd)], paint);
 }
 
 // バス停の地面：並ぶ場所のうすい緑の舗装と枠線、先頭の線、前ドアの前の点字ブロック
@@ -2400,6 +2539,8 @@ for (const b of BLD) {
   b.fl = []; for (let j = 0; j <= n; j++) b.fl.push(b.z1 + j * fh);   // 各階の床の高さ
   b.doors = DOORS.filter(d => d.b === b.i && (d.nx === 1 || d.ny === 1)).map(d => { const S = d.ny === 1, bay = b.bay, L = S ? b.x1 - b.x0 : b.y1 - b.y0, nb = Math.round(L / bay); return { k: S ? 'S' : 'E', ...doorBay(L / nb, S ? d.x - b.x0 : d.y - b.y0) }; });
   b.F = [{ k: 'S', x: b.x0, y: b.y1, dx: 1, dy: 0, nx: 0, ny: 1, L: b.x1 - b.x0 }, { k: 'E', x: b.x1, y: b.y0, dx: 0, dy: 1, nx: 1, ny: 0, L: b.y1 - b.y0 }];
+  // 壁面ビジョンの範囲：壁の長さを割り付け(bay)で割りきった間口の数に合わせる（左から2間口あけ、東は右に1間口、南は右に2間口あける）。[南の u0,u1],[東の u0,u1]
+  if (b.screen) b.scr = b.F.map(F => { const nb = Math.round(F.L / b.bay), bay = F.L / nb; return [2 * bay, (nb - (F.k === 'E' ? 1 : 2)) * bay]; });
   // 屋上の設備：4mの格子の目に、室外機・給水タンク・階段室・アンテナを並べる（乱数は使わず hash で決める）
   const gx = Math.floor((b.x1 - b.x0 - 3.8) / 4), gy = Math.floor((b.y1 - b.y0 - 3.8) / 4), it = [];
   const pu = b.ty === 'low' ? .55 : .3, pt = b.ty === 'low' ? 0 : b.ty === 'resi' ? .14 : .1;
@@ -2472,7 +2613,7 @@ function drawBuildingBody(b, lod) {
     const nb = Math.round(F.L / b.bay), bay = F.L / nb, lnc = dkc(F.wall, .8), lite = shade(b.col, (F.k === 'S' ? .78 : .93) * 1.1 * f), sd = F.k === 'S' ? b.x0 : b.y0 + 7;
     const win = (lit, i, j) => dark ? (F.k === 'S' ? (lit ? '#D9B566' : '#232A36') : (lit ? '#F2CF7A' : '#2A3240')) : F.k === 'S' ? 'rgba(70,95,125,.48)' : 'rgba(70,95,125,.38)';
     const litAt = (i, j) => hash((lod ? i : i >> 1) + 1.7, j, sd) > .45;
-    const skip = (i, j) => b.screen && j >= 1 && j <= 2 && (F.k === 'E' ? (i + 1) * bay > 3.2 - 1e-6 && i * bay < 14.4 - 1e-6 : (i + 1) * bay > 3.2 - 1e-6 && i * bay < 12.8 - 1e-6);
+    const sc_ = b.screen && b.scr[F.k === 'E' ? 1 : 0], skip = (i, j) => b.screen && j >= 1 && j <= 2 && (i + 1) * bay > sc_[0] - 1e-6 && i * bay < sc_[1] - 1e-6;
     const stairBays = b.stair && F.k === 'E' ? Math.ceil(3.2 / bay) : 0, sB0 = 1;   // 非常階段のある間口
     const inStair = i => stairBays && i >= sB0 && i < sB0 + stairBays;
     // ---- 上の階
@@ -2566,8 +2707,8 @@ function drawBuildingBody(b, lod) {
   if (b.stair && lod) fireStair(b, E, lod, f);
   // ---- 画面の枠
   if (b.screen) {
-    fr(E, 3.2, 14.4, fl_[1], fl_[3], '#11161E', null, .02);
-    fr(S, 3.2, 12.8, fl_[1] + .4, fl_[3] - .4, dark ? '#1A2230' : '#26303F', null, .02);
+    fr(E, b.scr[1][0], b.scr[1][1], fl_[1], fl_[3], '#11161E', null, .02);
+    fr(S, b.scr[0][0], b.scr[0][1], fl_[1] + .4, fl_[3] - .4, dark ? '#1A2230' : '#26303F', null, .02);
   }
   // ---- 屋上
   roofTop(b, lod, f);
@@ -2638,10 +2779,10 @@ function fireStair(b, F, lod, f) {
 // 画面（ビル壁面ビジョン）：動く部分だけ毎フレーム重ねて描く
 function drawScreenLive(b) {
   const S = b.F[0], E = b.F[1], fl_ = b.fl, hue = (simT * 14) % 360, z0 = fl_[1], z1 = fl_[3];
-  fr(E, 3.6, 14.0, z0 + .4, z1 - .4, `hsl(${hue},62%,${dark ? 52 : 58}%)`, null, .03);
-  const w = 3 + 2 * Math.sin(simT * .7);
-  fr(E, 4.8, 4.8 + w, z0 + 1.2, z1 - 1.2, `hsl(${(hue + 150) % 360},70%,${dark ? 62 : 70}%)`, null, .04);
-  fr(S, 3.2, 12.8, z0 + .4, z1 - .4, `hsl(${(hue + 60) % 360},45%,${dark ? 38 : 48}%)`, null, .03);
+  const e = b.scr[1], u = b.scr[0], w = Math.min(e[1] - e[0] - 2.4, 3 + 2 * Math.sin(simT * .7));
+  fr(E, e[0] + .4, e[1] - .4, z0 + .4, z1 - .4, `hsl(${hue},62%,${dark ? 52 : 58}%)`, null, .03);
+  fr(E, e[0] + 1.6, e[0] + 1.6 + w, z0 + 1.2, z1 - 1.2, `hsl(${(hue + 150) % 360},70%,${dark ? 62 : 70}%)`, null, .04);
+  fr(S, u[0], u[1], z0 + .4, z1 - .4, `hsl(${(hue + 60) % 360},45%,${dark ? 38 : 48}%)`, null, .03);
 }
 
 // --- 建物の絵のキャッシュ：建物ごと・テーマ・拡大率ごとに、画面に合わせた大きさで1枚ずつ描いて使い回す。
@@ -2702,17 +2843,17 @@ function bldSweep() {
 
 /* ---------- 信号柱 ---------- */
 // 角 c（0:北西 1:北東 2:南西 3:南東）の柱は、交差点の向こう側で自分の進行方向の左にあたる進入路 k の車用信号を持つ（日本の遠方・左側配置）。
-// 進入路 k は HEAD[k] の向きに走ってくる車で、左は L=(h1,-h0)。柱の位置は 中心+6.45*(h+L)。東行→北東、南行→南東、西行→南西、北行→北西
-const POLE_K = [3, 0, 2, 1];
+// 進入路 k は HEAD[k] の向きに走ってくる車で、左は L=(h1,-h0)。柱の位置は 中心+(RH+0.45)*(h+L)。東行→北東、南行→南東、西行→南西、北行→北西
+const POLE_K = [3, 0, 2, 1], POLE_D = RH + .45;   // 柱は交差点の箱の角から0.45m外（歩道の上）
 const POLES = [];
-IXS.forEach((I0, i) => { for (let c = 0; c < 4; c++) POLES.push({ ...L2W(i, c, 6.45, 6.45), i, c, k: POLE_K[c] }); });
-// 車用信号の頭：腕で車線の上（中心線から3.2m）に張り出し、向こう側の横断歩道の上に吊る。灯は来る車の方（-h）を向く
-const SH_Z = 5.45, SH_L = 3.2;
+IXS.forEach((I0, i) => { for (let c = 0; c < 4; c++) POLES.push({ ...L2W(i, c, POLE_D, POLE_D), i, c, k: POLE_K[c] }); });
+// 車用信号の頭：腕で内側と外側の車線のさかいの上（中心線から LN_LINE）に張り出し、向こう側の横断歩道の手前に吊る。灯は来る車の方（-h）を向く
+const SH_Z = 5.45, SH_L = LN_LINE;
 const SL_ON = ['#2FD08A', '#FFC933', '#F2463F'];   // 青・黄・赤
 function carSig(S, k) { return HEAD[k][0] ? S.ew : S.ns; }   // 進入路 k の車が従う信号（'g' | 'y' | 'r' | 'a'）
 function sigHeadAt(p) {   // 頭の中心（地面の位置）と向き
   const h = HEAD[p.k], Lx = h[1], Ly = -h[0], I0 = IXS[p.i];
-  return { x: I0.cx + h[0] * 6.45 + Lx * SH_L, y: I0.cy + h[1] * 6.45 + Ly * SH_L, hx: h[0], hy: h[1], Lx, Ly };
+  return { x: I0.cx + h[0] * POLE_D + Lx * SH_L, y: I0.cy + h[1] * POLE_D + Ly * SH_L, hx: h[0], hy: h[1], Lx, Ly };
 }
 function drawSigHead(p, st) {
   const k = K, g = sigHeadAt(p), lod = lodOf(k), on = st === 'g' ? 0 : st === 'y' ? 1 : 2, arrow = st === 'a';
@@ -2852,12 +2993,12 @@ function vlights(o, L, Wd, z, front) {
   const col = front ? '#FFF4C2' : '#E5484D';
   for (const s of [-1, 1]) vbox(vat(o, a, s * (Wd / 2 - .28)), .06, .3, z, z + .16, col, { top: col });
 }
-// 曲がる交差点の30m手前から曲がり終えるまで、曲がる側を点滅させる（左側通行なので左折は左側）。点灯中は -1(左)/+1(右)、消灯中は 0
+// 左折は停止線の30m手前から、右折は右折レーンへのすりつけの少し手前から、曲がり終えるまで、曲がる側を点滅させる（左側通行なので左折は左側）。点灯中は -1(左)/+1(右)、消灯中は 0
 function blinkSide(c) {
   // タクシーが人を乗せるとき：寄せるあいだは左、止まっているあいだは両側（ハザード）、走り出すときは右
   if ((c.bs && (c.bs > 1 || c.pickS - c.s < 40)) || c.sigR > simT) { const on = Math.floor(simT * 3 + c.id * .37) % 2 === 0; return on ? (c.bs > 1 ? 2 : c.bs === 1 ? -1 : 1) : 0; }
   const cr = c.cross[c.ci];
-  if (!cr || cr.turn === 'straight' || c.s <= cr.stopS - 30 || c.s >= cr.exitS) return 0;
+  if (!cr || cr.turn === 'straight' || c.s >= cr.exitS || (cr.rt ? c.s + 4 < cr.tp0 : c.s <= cr.stopS - 30)) return 0;   // 右折は右折レーンへのすりつけに入る少し前から
   return Math.floor(simT * 3 + c.id * .37) % 2 === 0 ? (cr.turn === 'left' ? -1 : 1) : 0;
 }
 // ウインカー：前後の角の橙色ランプ（見えている面だけ）と、曲がる側の側面マーカー。暗いときは光のにじみも足す
@@ -3537,7 +3678,7 @@ const SPD_COL = ['#E5484D', '#F2B134', '#33C48D'];
 function drawTrail(p) {
   const t = p.trail;
   if (t.length < 6) return;
-  const pt = i => I(clamp(t[i], 0, 60), clamp(t[i + 1], 0, 60), footZ(t[i], t[i + 1]));
+  const pt = i => I(clamp(t[i], 0, W), clamp(t[i + 1], 0, W), footZ(t[i], t[i + 1]));
   ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.strokeStyle = 'rgba(20,26,36,.5)'; ctx.lineWidth = Math.max(5, K * .4);
   ctx.beginPath();
@@ -3567,7 +3708,7 @@ function drawRoute() {
   if (!sel) return;
   drawTrail(sel);
   if (sel.gone) return;
-  const pts = routePts(sel).map(q => { const x = clamp(q[0], 0, 60), y = clamp(q[1], 0, 60); return I(x, y, footZ(x, y)); });
+  const pts = routePts(sel).map(q => { const x = clamp(q[0], 0, W), y = clamp(q[1], 0, W); return I(x, y, footZ(x, y)); });
   const path = () => { ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); };
   ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.strokeStyle = 'rgba(20,26,36,.55)'; ctx.lineWidth = Math.max(4, K * .32); path(); ctx.stroke();
