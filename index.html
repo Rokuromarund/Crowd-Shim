@@ -2388,6 +2388,16 @@ let DPR = 1, CW = 0, CH = 0, K = 10, OX = 0, OY = 0;
 const ZS = 0.82;
 let HL = 1;   // 細い線の太さ：1デバイスピクセル
 const LW = k => Math.max(.5, Math.min(HL, k / 14 * HL));   // 輪郭線の太さは拡大率に比例させず、1デバイスピクセルで頭打ち
+// 人・自転車・乗り物の細かさ（画面上の大きさで3段階。人の背たけは約 K*1.44px）：0＝遠景（12px未満：塗りだけ）、1＝中間（28px未満：輪郭線の下地なし）、2＝近景（すべて描く）
+const TRK = [8.4, 19.5];
+let TR = 2;
+// 手足の線：近景は輪郭線の下地（太い線）を敷いてから色の線、中間以下は下地なしで少し太い色の線だけ
+function limbL(p0, p1, w, c, lw) {
+  ctx.lineCap = 'round';
+  if (TR > 1) { ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke(); }
+  else w += lw;
+  ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+}
 const I = (x, y, z) => [(x - y) * K * 0.866 + OX, (x + y) * K * 0.5 - (z || 0) * K * ZS + OY];
 // 動かない絵（地面・建物）はデバイスピクセルに合わせて描く：塗りは整数、1ピクセルの線は.5ずらし
 let SNAP = false;
@@ -2403,11 +2413,38 @@ function fit() {
   OX = (CW - side) / 2;
   OY = top + ah / 2 - W / 2 * K;
 }
-function resize() {
-  DPR = Math.min(2, devicePixelRatio || 1); HL = 1 / DPR;
-  CW = cv.clientWidth; CH = cv.clientHeight;
+// 描画の解像度：端末のDPR（上限2）を上限に、重いときだけ段階的に下げる（2 → 1.5 → 1.25 → 1）。下げたぶん塗るピクセルが減る
+let RSTEPS = [1], rsi = 0, rsCap = 0;   // rsCap：下げた段の倍率（0＝下げていない）
+function setBacking() {
+  DPR = RSTEPS[rsi]; HL = 1 / DPR;
   cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
+}
+function resize() {
+  const mx = Math.min(2, devicePixelRatio || 1);
+  RSTEPS = [mx, ...[1.5, 1.25, 1].filter(v => v < mx)];
+  rsi = rsCap ? Math.max(0, RSTEPS.findIndex(v => v <= rsCap + 1e-6)) : 0;
+  CW = cv.clientWidth; CH = cv.clientHeight;
+  setBacking();
   fit();
+}
+// 適応解像度：フレーム間隔が約1秒つづけて20msを超え、かつ描画に時間がかかっているなら1段下げ、約3秒つづけて軽い（12ms未満）なら1段戻す。操作中は変えない
+const RS = { dEma: 16, wEma: 8, drEma: 4, slow: 0, fast: 0, last: 0, change: 0, ban: [], t0: 0 };
+function adaptScale(now, dtMs, workMs, drawMs) {
+  if (dtMs > 250) { RS.slow = RS.fast = 0; return; }   // タブを閉じていた間などは数えない
+  const busy = pts.size > 0 || now - lastIn < 400 || bldZoom;   // ドラッグ・ピンチ・ズーム中
+  if (busy || RSTEPS.length < 2 || now - RS.change < 600) { RS.slow = RS.fast = 0; return; }
+  const a = 1 - Math.exp(-dtMs / 400);
+  RS.dEma += (dtMs - RS.dEma) * a; RS.wEma += (workMs - RS.wEma) * a; RS.drEma += (drawMs - RS.drEma) * a;
+  const slow = RS.dEma > 20 && RS.drEma > 4, fast = RS.wEma < 12;
+  RS.slow = slow ? RS.slow + dtMs : 0; RS.fast = fast ? RS.fast + dtMs : 0;
+  if (now - RS.change < 2000) return;
+  let ni = rsi;
+  if (RS.slow > 1000 && rsi < RSTEPS.length - 1) { ni = Math.min(RSTEPS.length - 1, rsi + (RS.dEma > 38 ? 2 : 1));   // 38ms超（30fps割れ）なら2段いっぺんに
+    RS.ban[rsi] = now + 20000; }   // 下げた直後に同じ段へ戻ってゆれないよう、20秒は戻さない
+  else if (RS.fast > 3000 && rsi > 0 && !(RS.ban[rsi - 1] > now)) ni = rsi - 1;
+  if (ni === rsi) return;
+  rsi = ni; rsCap = ni ? RSTEPS[ni] : 0; RS.change = now; RS.slow = RS.fast = 0; RS.dEma = 16; RS.wEma = 8; RS.drEma = 4;
+  setBacking();
 }
 function zoomAt(px, py, nk) {
   nk = clamp(nk, 1.2, 60);
@@ -3124,6 +3161,16 @@ function vlights(o, L, Wd, z, front) {
   const col = front ? '#FFF4C2' : '#E5484D';
   for (const s of [-1, 1]) vbox(vat(o, a, s * (Wd / 2 - .28)), .06, .3, z, z + .16, col, { top: col });
 }
+// 中間の細かさ：車輪は見える側面の1枚だけ、ライトは見える端の小さな2枚だけ（箱にしない）
+function vwheelsLite(o, Wd, list, r) {
+  const b = (o.hx - o.hy > 0 ? 1 : -1) * (Wd / 2 + .04), col = vsh('#1E222A', .9);
+  for (const a of list) { const p0 = vat(o, a - r, b), p1 = vat(o, a + r, b); vpoly([[p0.cx, p0.cy, 0], [p1.cx, p1.cy, 0], [p1.cx, p1.cy, r * 2], [p0.cx, p0.cy, r * 2]], col); }
+}
+function vlightsLite(o, L, Wd, z, front) {
+  if ((front ? 1 : -1) * (o.hx + o.hy) <= 0) return;
+  const a = front ? L / 2 + .01 : -L / 2 - .01, col = vsh(front ? '#FFF4C2' : '#E5484D', .9);
+  for (const s of [-1, 1]) { const b = s * (Wd / 2 - .28), p0 = vat(o, a, b - .15), p1 = vat(o, a, b + .15); vpoly([[p0.cx, p0.cy, z], [p1.cx, p1.cy, z], [p1.cx, p1.cy, z + .16], [p0.cx, p0.cy, z + .16]], col); }
+}
 // 左折は停止線の30m手前から、右折は右折レーンへのすりつけの少し手前から、曲がり終えるまで、曲がる側を点滅させる（左側通行なので左折は左側）。点灯中は -1(左)/+1(右)、消灯中は 0
 function blinkSide(c) {
   // タクシー・バスが人を乗せるとき：寄せるあいだは左、止まっているあいだは両側（ハザード）、走り出すときは右
@@ -3159,11 +3206,7 @@ function drawRider(c, phase) {
   // a：進行方向、b：横方向（メートル）
   const W2 = (a, b, z) => I(c.cx + c.hx * a - c.hy * b, c.cy + c.hy * a + c.hx * b, z);
   const near = (c.hx - c.hy) > 0 ? 1 : -1, far = -near; // 見る人に近い側
-  const limb = (p0, p1, w, col) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(col); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, col) => limbL(p0, p1, w, col, lw);
   const legW = Math.max(1, k * .1), armW = Math.max(1, k * .085);
   const legC = vsh(c.rpt, .9), armC = vsh(c.rcl, .86);
   const leg = s => { const h = W2(-.3, s * .1, .84), kn = W2(.1, s * .27, .74), ft = W2(-.02, s * .27, .36); limb(h, kn, legW, legC); limb(kn, ft, legW, legC); };
@@ -3179,13 +3222,19 @@ function drawRider(c, phase) {
   ctx.beginPath();
   ctx.moveTo(hip[0] - hw, hip[1]); ctx.lineTo(top[0] - hw, top[1]); ctx.lineTo(top[0] + hw, top[1]); ctx.lineTo(hip[0] + hw, hip[1]); ctx.closePath();
   ctx.lineJoin = 'round';
-  ctx.fillStyle = vsh(c.rcl, 1); ctx.fill(); ctx.strokeStyle = dkc(vsh(c.rcl, 1)); ctx.lineWidth = lw; ctx.stroke();
+  ctx.fillStyle = vsh(c.rcl, 1); ctx.fill(); if (ol) { ctx.strokeStyle = dkc(vsh(c.rcl, 1)); ctx.lineWidth = lw; ctx.stroke(); }
   leg(near);
   limb(sh(near), grip(near), armW, armC);
   // 頭とヘルメット
   const hd = W2(-.08, 0, 1.6), hr = k * .13;
-  ctx.fillStyle = vsh(c.rsk, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1], hr, 0, 6.283); ctx.fill(); ctx.strokeStyle = dkc(vsh(c.rsk, 1)); ctx.lineWidth = lw; ctx.stroke();
-  ctx.fillStyle = vsh(c.helm, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1] - hr * .05, hr * 1.18, Math.PI * .92, Math.PI * 2.08); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = vsh(c.rsk, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1], hr, 0, 6.283); ctx.fill(); if (ol) { ctx.strokeStyle = dkc(vsh(c.rsk, 1)); ctx.lineWidth = lw; ctx.stroke(); }
+  ctx.fillStyle = vsh(c.helm, 1); ctx.beginPath(); ctx.arc(hd[0], hd[1] - hr * .05, hr * 1.18, Math.PI * .92, Math.PI * 2.08); ctx.closePath(); ctx.fill(); if (ol) ctx.stroke();
+}
+// 遠景：胴と頭の塗りだけ
+function drawRiderFar(c) {
+  const k = K, W2 = (a, z) => I(c.cx + c.hx * a, c.cy + c.hy * a, z), hip = W2(-.3, .84), top = W2(-.14, 1.42), hd = W2(-.08, 1.6), hw = k * .19, hr = Math.max(.8, k * .13);
+  ctx.fillStyle = vsh(c.rcl, 1); snRect(top[0] - hw, top[1], hw * 2, hip[1] - top[1]);
+  ctx.fillStyle = vsh(c.rsk, 1); snRect(hd[0] - hr, hd[1] - hr, hr * 2, hr * 2);
 }
 // タクシーの左うしろのドア：蝶番は前の縁で、開くほど外（歩道がわ）へふれる。薄い板（下が車体色、上が窓）
 function vdoor(c, o, Wd) {
@@ -3210,7 +3259,8 @@ function drawCar(c) {
   for (const q of quad(c.cx, c.cy, c.hx, c.hy, c.len, c.w)) if (q[0] < 0 || q[0] > W || q[1] < 0 || q[1] > W) return;
   poly(quad(c.cx + .15, c.cy + .15, c.hx, c.hy, c.len + .2, c.w + .2).map(q => [q[0], q[1], .01]), dark ? 'rgba(0,0,0,.35)' : 'rgba(10,15,25,.2)');
   vDF = dark ? .65 : 1;
-  vOL = dkc(c.col);   // 輪郭線は車体の色を暗くした色
+  const t = TR;   // 遠景(0)：輪郭線・車輪・ライトなし／中間(1)：輪郭線なし、車輪とライトは平らな1枚／近景(2)：すべて
+  vOL = t > 1 ? dkc(c.col) : null;   // 輪郭線は車体の色を暗くした色
   const o = { cx: c.cx, cy: c.cy, hx: c.hx, hy: c.hy }, L = c.len, Wd = c.w, bs = blinkSide(c);
   // 街全体を表示しているときは小さすぎて細部が見えないので、台1つだけにして軽くする
   if (K < 3.5) {
@@ -3220,23 +3270,22 @@ function drawCar(c) {
     vOL = null; return;
   }
   if (c.kind === 'bike') {
-    vbox(vat(o, L / 2 - .35), .6, .14, 0, .6, '#1E222A'); vbox(vat(o, -L / 2 + .35), .6, .14, 0, .6, '#1E222A');
-    drawRider(c, 'far');
+    if (t) { vbox(vat(o, L / 2 - .35), .6, .14, 0, .6, '#1E222A'); vbox(vat(o, -L / 2 + .35), .6, .14, 0, .6, '#1E222A'); drawRider(c, 'far'); }
     vfrustum(o, L - .4, .42, .35, .8, L - .9, .34, .1, c.col);
-    drawRider(c, 'near');
+    if (t) drawRider(c, 'near'); else drawRiderFar(c);
     if (bs) { const df = vDF; vDF = 1; if (o.hx + o.hy > 0) vbox(vat(o, L / 2 - .35, bs * .32), .1, .08, .85, .95, '#FFA51F', { top: '#FFC15A' }); else vbox(vat(o, -L / 2 + .3, bs * .2), .1, .08, .7, .8, '#FFA51F', { top: '#FFC15A' }); vDF = df; }
   } else if (c.kind === 'bus') {
-    vwheels(o, Wd, [L / 2 - 1.9, -L / 2 + 2.4], .5, .36);
+    if (t > 1) vwheels(o, Wd, [L / 2 - 1.9, -L / 2 + 2.4], .5, .36); else if (t) vwheelsLite(o, Wd, [L / 2 - 1.9, -L / 2 + 2.4], .5);
     vbox(o, L, Wd, .32, 2.9, c.col, { top: '#E9EDF0' });
     // 窓の帯は車体より短いので、前後の面が屋根の上に透けて見えないよう側面だけ描く。前の窓も前が見えるときだけ
     vbox(vat(o, -.25), L - 1.6, Wd + .02, 1.45, 2.45, GLASS, { noTop: true, noEnds: true });
     if (o.hx + o.hy > 0) vbox(vat(o, L / 2 - .02), .06, Wd - .4, 1.2, 2.6, GLASS, { noTop: true });
-    if (K >= 3.5 && o.hy - o.hx > .5) { busDoor(o, Wd, c.col, L / 2 - BUS_DF, c.doorA); busDoor(o, Wd, c.col, -L / 2 + BUS_DR, c.doorR); }   // 縁石がわ（左）の側面が見えるときだけドア
-    vbox(vat(o, -.6), 2.4, 1.3, 2.9, 3.15, '#C9CFD6');
-    vlights(o, L, Wd, .6, true); vlights(o, L, Wd, .6, false);
-    if (bs) vblink2(o, L, Wd, .6, bs);
+    if (t && o.hy - o.hx > .5) { busDoor(o, Wd, c.col, L / 2 - BUS_DF, c.doorA); busDoor(o, Wd, c.col, -L / 2 + BUS_DR, c.doorR); }   // 縁石がわ（左）の側面が見えるときだけドア
+    if (t) vbox(vat(o, -.6), 2.4, 1.3, 2.9, 3.15, '#C9CFD6');
+    if (t > 1) { vlights(o, L, Wd, .6, true); vlights(o, L, Wd, .6, false); } else if (t) { vlightsLite(o, L, Wd, .6, true); vlightsLite(o, L, Wd, .6, false); }
+    if (bs) vblink2(o, L, Wd, .6, bs, t < 2);
   } else if (c.kind === 'truck') {
-    vwheels(o, Wd, [L / 2 - 1, -L / 2 + 1.1, -L / 2 + 2.1], .45, .36);
+    if (t > 1) vwheels(o, Wd, [L / 2 - 1, -L / 2 + 1.1, -L / 2 + 2.1], .45, .36); else if (t) vwheelsLite(o, Wd, [L / 2 - 1, -L / 2 + 1.1, -L / 2 + 2.1], .45);
     const cabO = vat(o, L / 2 - .95);
     vBackToFront(o, () => {
       vbox(cabO, 1.9, Wd - .1, .4, 1.25, c.col);
@@ -3245,19 +3294,19 @@ function drawCar(c) {
       vbox(vat(o, -1.05), L - 2.15, Wd, .55, 2.95, '#EEF1F4');
       vbox(vat(o, -1.05), L - 2.13, Wd + .02, 1.05, 1.35, c.col, { noTop: true });
     });
-    vlights(o, L, Wd - .1, .65, true); vlights(o, L, Wd, .7, false);
-    if (bs) vblink2(o, L, Wd - .1, .65, bs);
+    if (t > 1) { vlights(o, L, Wd - .1, .65, true); vlights(o, L, Wd, .7, false); } else if (t) { vlightsLite(o, L, Wd - .1, .65, true); vlightsLite(o, L, Wd, .7, false); }
+    if (bs) vblink2(o, L, Wd - .1, .65, bs, t < 2);
   } else {
     // 乗用車・軽自動車・ミニバン・タクシー・パトカー：下の台と、窓を斜めにした車室
     const sp = { kei: [.3, .9, 1.65, .7, .55, -.08], van: [.32, .98, 1.85, .78, .62, -.14], police: [.32, .85, 1.45, .58, .37, -.2] }[c.kind] || [.32, .85, 1.42, .58, .36, -.18];
     const dh = c.kind === 'taxi' && c.doorA > .02, dv = o.hy - o.hx > 0;   // 開いたドア（左がわが奥なら車体より先に、手前なら後に描く）
     if (dh && !dv) vdoor(c, o, Wd);
-    vwheels(o, Wd, [L / 2 - .85, -L / 2 + .85], .32);
+    if (t > 1) vwheels(o, Wd, [L / 2 - .85, -L / 2 + .85], .32); else if (t) vwheelsLite(o, Wd, [L / 2 - .85, -L / 2 + .85], .32);
     vfrustum(o, L, Wd, sp[0], sp[1], L - .35, Wd - .08, 0, c.kind === 'police' ? '#1F2329' : c.col, { top: c.col });
     if (c.kind === 'police') vfrustum(o, L - .1, Wd + .01, .62, sp[1], L - .35, Wd - .07, 0, '#F4F5F7');
     vfrustum(vat(o, L * sp[5] * .3), L * sp[3], Wd - .16, sp[1], sp[2], L * sp[4], Wd - .42, -L * .03, GLASS, { top: c.kind === 'police' ? '#F4F5F7' : c.col });
-    vlights(o, L - .35, Wd - .08, sp[1] - .25, true); vlights(o, L - .35, Wd - .08, sp[1] - .25, false);
-    if (bs) vblink2(o, L - .35, Wd - .08, sp[1] - .25, bs);
+    if (t > 1) { vlights(o, L - .35, Wd - .08, sp[1] - .25, true); vlights(o, L - .35, Wd - .08, sp[1] - .25, false); } else if (t) { vlightsLite(o, L - .35, Wd - .08, sp[1] - .25, true); vlightsLite(o, L - .35, Wd - .08, sp[1] - .25, false); }
+    if (bs) vblink2(o, L - .35, Wd - .08, sp[1] - .25, bs, t < 2);
     if (c.kind === 'taxi') {
       // 屋根の行灯：空車は明るく、実車は暗く。空車は運転席の前に赤い「空車」ランプも点ける
       const df = vDF; if (c.vacant) vDF = 1;
@@ -3284,6 +3333,8 @@ function pedColor(p) {
   return dark ? shade(p.cl, .8) : p.cl;
 }
 const hasRR = typeof ctx.roundRect === 'function';
+// 遠景の小さな塗り：デバイスピクセルに合わせた四角（半端な位置のアンチエイリアスを避けて速くする）
+function snRect(x, y, w, h) { const x0 = sn(x), y0 = sn(y); ctx.fillRect(x0, y0, Math.max(HL, sn(x + w) - x0), Math.max(HL, sn(y + h) - y0)); }
 function drawPed(p) {
   const z0 = blockAt(p.x, p.y) >= 0 ? .15 : 0;
   const q = I(p.x, p.y, z0), X = q[0], Y = q[1], k = K, zf = k * ZS;
@@ -3291,23 +3342,27 @@ function drawPed(p) {
   if (p.bike) { drawBike(p, q, z0, col); return; }
   if (k < 4) { ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.6, 2, zf * 1.6); return; }
   if (p.entT) ctx.globalAlpha = clamp(1 - (simT - p.entT) / .4, .05, 1);   // タクシーに乗りこむ：すっと消える
-  ctx.fillStyle = 'rgba(15,20,30,.2)';
-  ctx.beginPath(); ctx.ellipse(X, Y, k * .3, k * .15, 0, 0, 6.283); ctx.fill();
-  if (p === sel) { ctx.strokeStyle = theme.amber; ctx.lineWidth = Math.max(2, k * .12); ctx.beginPath(); ctx.ellipse(X, Y, k * .55, k * .28, 0, 0, 6.283); ctx.stroke(); }
   const s = Math.hypot(p.vx, p.vy), amp = Math.min(1, s / .6);
   // 進む向き：動いているあいだは速度の向き、止まったら最後に向いていた向きのまま
   if (s > .15) { p.fhx = p.vx / s; p.fhy = p.vy / s; }
+  const t = p === sel ? Math.max(TR, 1) : TR;   // 選んだ人は中間以上で描く
+  if (t === 0) {   // 遠景：胴（脚まで）と頭の2つの塗りだけ（線も影もなし）
+    const e = LW(k), hr = Math.max(.8, k * .13) + e / 2;   // eは近景の輪郭線の1本ぶん（太さをそろえる）
+    ctx.fillStyle = col; snRect(X - k * .19 - e / 2, Y - zf * 1.46 - e / 2, k * .38 + e, zf * 1.4 + e);
+    ctx.fillStyle = p.sk; snRect(X - hr, Y - zf * 1.62 - hr, hr * 2, hr * 2);
+    if (p.entT) ctx.globalAlpha = 1;
+    return;
+  }
+  ctx.fillStyle = 'rgba(15,20,30,.2)';
+  ctx.beginPath(); ctx.ellipse(X, Y, k * .3, k * .15, 0, 0, 6.283); ctx.fill();
+  if (p === sel) { ctx.strokeStyle = theme.amber; ctx.lineWidth = Math.max(2, k * .12); ctx.beginPath(); ctx.ellipse(X, Y, k * .55, k * .28, 0, 0, 6.283); ctx.stroke(); }
   const hx = p.fhx === undefined ? 0 : p.fhx, hy = p.fhy === undefined ? 1 : p.fhy, nx = -hy, ny = hx;
   // 体の部位を、進む向き（a）と横向き（b）のメートルで置く
   const W3 = (a, b, z) => I(p.x + hx * a + nx * b, p.y + hy * a + ny * b, z0 + z);
   const st = Math.sin(p.ph) * amp * .22; // 歩幅（前後の振り）
   // 輪郭線：乗り物と同じ色・太さ
   const ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
-  const limb = (p0, p1, w, c) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
   const legCol = P.color === 'clothes' ? (dark ? shade(p.pt, .7) : p.pt) : (dark ? '#151920' : '#2A2F38');
   const armCol = P.color === 'clothes' ? shade(p.cl, dark ? .66 : .86) : col;
   const legW = Math.max(1, k * .1), armW = Math.max(1, k * .085);
@@ -3320,21 +3375,24 @@ function drawPed(p) {
   leg(farSide); arm(farSide);
   // 胴：角の丸い四角（元の形）。手足だけが進む向きに合わせて動く
   ctx.fillStyle = col;
+  if (t < 2) ctx.fillRect(X - k * .2, Y - zf * 1.46, k * .4, zf * .74);   // 中間：角丸は見分けがつかないので素の四角
+  else {
   ctx.beginPath();
   if (hasRR) ctx.roundRect(X - k * .2, Y - zf * 1.46, k * .4, zf * .74, k * .1);
   else ctx.rect(X - k * .2, Y - zf * 1.46, k * .4, zf * .74);
   ctx.fill();
-  ctx.strokeStyle = dkc(col); ctx.lineWidth = lw; ctx.stroke();
+  }
+  if (t > 1) { ctx.strokeStyle = dkc(col); ctx.lineWidth = lw; ctx.stroke(); }
   leg(nearSide); arm(nearSide);
   if (p.tissue > simT && k >= 8) { const c = W3(.1, nearSide * .25, .95); ctx.fillStyle = '#fff'; ctx.strokeStyle = ol; ctx.lineWidth = lw; ctx.beginPath(); ctx.rect(c[0] - k * .045, c[1] - k * .03, k * .09, k * .06); ctx.fill(); ctx.stroke(); }   // 受け取ったティッシュ
   // 頭：奥へ歩いているときは後頭部（髪）、手前へ歩いているときは顔が見える
   const hq = W3(0, 0, 1.62), hr = k * .13;
   ctx.lineWidth = lw; ctx.strokeStyle = dkc(p.sk);
-  ctx.fillStyle = p.sk; ctx.beginPath(); ctx.arc(hq[0], hq[1], hr, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = p.sk; ctx.beginPath(); ctx.arc(hq[0], hq[1], hr, 0, 6.283); ctx.fill(); if (t > 1) ctx.stroke();
   ctx.fillStyle = p.hr; ctx.beginPath();
   if (hx + hy < -.3) ctx.arc(hq[0], hq[1], hr * 1.02, 0, 6.283);
   else ctx.arc(hq[0], hq[1] - hr * .1, hr * 1.04, Math.PI, 0);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.closePath(); ctx.fill(); if (t > 1) ctx.stroke();
   ctx.globalAlpha = 1;
 }
 
@@ -3364,11 +3422,7 @@ function perfDraw(s) {
   const hx = s.hx, hy = s.hy, nx = -hy, ny = hx;
   const W3 = (a, b, z) => I(s.x + hx * a + nx * b, s.y + hy * a + ny * b, z0 + z);
   const ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
-  const limb = (p0, p1, w, c) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
   ctx.fillStyle = 'rgba(15,20,30,.2)'; ctx.beginPath(); ctx.ellipse(X, Y, k * .32, k * .16, 0, 0, 6.283); ctx.fill();
   const legCol = dark ? '#151920' : '#2A2F38', armCol = shade(s.cl, dark ? .66 : .86), legW = Math.max(1, k * .1), armW = Math.max(1, k * .085);
   // 手の位置 [前, 横, 高さ]：呼び込みは片手を振る、本番は玉を受ける、見せ場は両手を高く
@@ -3417,11 +3471,7 @@ function dogDraw(s) {
   }
   const hx = s.hx, hy = s.hy, nx = -hy, ny = hx, ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
   const U = 1.35, ku = k * U, W3 = (a, b, z) => I(s.x + (hx * a + nx * b) * U, s.y + (hy * a + ny * b) * U, z0 + z * U);   // 中型犬くらいに大きく
-  const limb = (p0, p1, w, c) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
   const dk = shade(s.cl, dark ? .55 : .74), lt = dark ? '#B9B2A4' : '#F3EAD8';
   const run = s.spd > 3, amp = Math.min(1, s.spd / 1.2) * (run ? .2 : .1), bob = run ? Math.abs(Math.sin(s.ph)) * .06 : 0, sn = Math.sin(s.ph) * amp;
   ctx.fillStyle = 'rgba(15,20,30,.2)'; ctx.beginPath(); ctx.ellipse(X, Y, ku * .34, ku * .17, 0, 0, 6.283); ctx.fill();
@@ -3480,11 +3530,7 @@ function tissueDraw(s) {
   const hx = s.hx, hy = s.hy, nx = -hy, ny = hx;
   const W3 = (a, b, z) => I(s.x + hx * a + nx * b, s.y + hy * a + ny * b, z0 + z);
   const ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
-  const limb = (p0, p1, w, c) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
   ctx.fillStyle = 'rgba(15,20,30,.2)'; ctx.beginPath(); ctx.ellipse(X, Y, k * .32, k * .16, 0, 0, 6.283); ctx.fill();
   const legCol = dark ? '#151920' : '#2A2F38', armCol = shade(s.cl, dark ? .66 : .86), legW = Math.max(1, k * .1), armW = Math.max(1, k * .085);
   const e = simT - s.armT, ext = s.armTo && e < 1.1 ? Math.sin(Math.min(1, e / 1.1) * Math.PI) : 0;   // 腕をのばす（0〜1〜0）
@@ -3584,30 +3630,31 @@ function drawBike(p, q, z0, col, park) {
   const X = q[0], Y = q[1], k = K, zf = k * ZS;
   const hx = p.fhx === undefined ? 0 : p.fhx, hy = p.fhy === undefined ? 1 : p.fhy, nx = -hy, ny = hx;
   const W3 = (a, b, z) => I(p.x + hx * a + nx * b, p.y + hy * a + ny * b, z0 + z);
-  if (k < 4) {
+  if (k < 4 || (TR === 0 && (park || p !== sel))) {   // 縮小・遠景：向きを示す短い線と、人の体
     const a = W3(-.7, 0, .4), b = W3(.7, 0, .4);
     ctx.lineCap = 'round'; ctx.strokeStyle = park ? (dark ? shade(p.bc, .8) : p.bc) : col; ctx.lineWidth = park ? 2 : 2.5; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-    if (!park) { ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.2, 2, zf * .9); }
+    if (!park) { ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.2, 2, zf * .9); if (k >= 4) { ctx.fillStyle = p.sk; ctx.fillRect(X - 1, Y - zf * 1.45, 2, 2); } }
     return;
   }
+  const mid = TR < 2;   // 中間：手足・フレームを下地なしにして、同じ色の線は1回の描画にまとめる
   const ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
   // 影：進む向きに細長く
   const sa = W3(-.7, 0, 0), sb = W3(.7, 0, 0);
   ctx.fillStyle = 'rgba(15,20,30,.2)';
   ctx.beginPath(); ctx.ellipse(X, Y, Math.hypot(sb[0] - sa[0], sb[1] - sa[1]) / 2, k * .12, Math.atan2(sb[1] - sa[1], sb[0] - sa[0]), 0, 6.283); ctx.fill();
   if (p === sel && !park) { ctx.strokeStyle = theme.amber; ctx.lineWidth = Math.max(2, k * .12); ctx.beginPath(); ctx.ellipse(X, Y, k * .8, k * .36, 0, 0, 6.283); ctx.stroke(); }
-  const limb = (p0, p1, w, c) => {
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = dkc(c); ctx.lineWidth = w + lw * 2; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-  };
+  const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
   const fc = dark ? shade(p.bc, .8) : p.bc, tire = dark ? '#0B0D11' : '#1E222A', fw = Math.max(1, k * .045);
   const wheel = a0 => {
     ctx.beginPath();
     for (let i = 0; i <= 16; i++) { const t = i / 16 * 6.283, w = W3(a0 + Math.cos(t) * .33, 0, .33 + Math.sin(t) * .33); if (i) ctx.lineTo(w[0], w[1]); else ctx.moveTo(w[0], w[1]); }
     ctx.lineCap = 'round'; ctx.strokeStyle = tire; ctx.lineWidth = Math.max(1.2, k * .05); ctx.stroke();
   };
-  wheel(-.52); wheel(.52);
+  if (mid) {
+    ctx.beginPath();
+    for (const a0 of [-.52, .52]) for (let i = 0; i <= 10; i++) { const t = i / 10 * 6.283, w = W3(a0 + Math.cos(t) * .33, 0, .33 + Math.sin(t) * .33); if (i) ctx.lineTo(w[0], w[1]); else ctx.moveTo(w[0], w[1]); }
+    ctx.lineCap = 'round'; ctx.strokeStyle = tire; ctx.lineWidth = Math.max(1.2, k * .05); ctx.stroke();
+  } else { wheel(-.52); wheel(.52); }
   const nearSide = (nx + ny) > 0 ? 1 : -1, farSide = -nearSide;
   const legCol = park ? 0 : P.color === 'clothes' ? (dark ? shade(p.pt, .7) : p.pt) : (dark ? '#151920' : '#2A2F38');
   const armCol = park ? 0 : P.color === 'clothes' ? shade(p.cl, dark ? .66 : .86) : col;
@@ -3618,12 +3665,17 @@ function drawBike(p, q, z0, col, park) {
     const ha = -.26, hz = .94, da = pa - ha, dz = pz - hz, L = Math.min(Math.hypot(da, dz), .83), h = Math.sqrt(Math.max(0, .42 * .42 - L * L / 4));
     const kn = W3(ha + da / 2 - dz / L * h, sd * .12, hz + dz / 2 + da / L * h);
     const hp = W3(ha, sd * .1, hz), ft = W3(pa, sd * .13, pz);
+    if (mid) { ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = legCol; ctx.lineWidth = legW + lw; ctx.beginPath(); ctx.moveTo(hp[0], hp[1]); ctx.lineTo(kn[0], kn[1]); ctx.lineTo(ft[0], ft[1]); ctx.stroke(); return; }
     limb(hp, kn, legW, legCol); limb(kn, ft, legW, legCol);
   };
   if (!park) leg(farSide);
   // フレーム：後輪・ペダル軸・サドル・ハンドルを結ぶ
   const fr = (a0, z0_, a1, z1) => limb(W3(a0, 0, z0_), W3(a1, 0, z1), fw, fc);
-  fr(-.52, .33, -.08, .3); fr(-.08, .3, -.24, .88); fr(-.52, .33, -.24, .88); fr(-.24, .88, .38, .86); fr(-.08, .3, .38, .86); fr(.38, .86, .52, .33);
+  if (mid) {
+    ctx.lineCap = 'round'; ctx.strokeStyle = fc; ctx.lineWidth = fw + lw; ctx.beginPath();
+    for (const g of [[-.52, .33, -.08, .3], [-.08, .3, -.24, .88], [-.52, .33, -.24, .88], [-.24, .88, .38, .86], [-.08, .3, .38, .86], [.38, .86, .52, .33]]) { const a = W3(g[0], 0, g[1]), b = W3(g[2], 0, g[3]); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+    ctx.stroke();
+  } else { fr(-.52, .33, -.08, .3); fr(-.08, .3, -.24, .88); fr(-.52, .33, -.24, .88); fr(-.24, .88, .38, .86); fr(-.08, .3, .38, .86); fr(.38, .86, .52, .33); }
   limb(W3(.38, 0, .86), W3(.4, 0, 1.04), fw, '#2B3039');
   limb(W3(.4, -.2, 1.04), W3(.4, .2, 1.04), Math.max(1, k * .05), '#2B3039');
   limb(W3(-.3, 0, .92), W3(-.18, 0, .92), Math.max(1.5, k * .07), '#2B3039');
@@ -3634,21 +3686,22 @@ function drawBike(p, q, z0, col, park) {
   const hip = W3(-.26, 0, .96), top = W3(-.04, 0, 1.46), hw = k * .19;
   ctx.beginPath();
   ctx.moveTo(hip[0] - hw, hip[1]); ctx.lineTo(top[0] - hw, top[1]); ctx.lineTo(top[0] + hw, top[1]); ctx.lineTo(hip[0] + hw, hip[1]); ctx.closePath();
-  ctx.lineJoin = 'round'; ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = dkc(col); ctx.lineWidth = lw; ctx.stroke();
+  ctx.lineJoin = 'round'; ctx.fillStyle = col; ctx.fill(); if (!mid) { ctx.strokeStyle = dkc(col); ctx.lineWidth = lw; ctx.stroke(); }
   leg(nearSide);
   limb(sh(nearSide), grip(nearSide), armW, armCol);
   // 頭：ヘルメットをかぶる人とかぶらない人がいる
   const hq = W3(.04, 0, 1.64), hr = k * .13;
   ctx.lineWidth = lw; ctx.strokeStyle = dkc(p.sk);
-  ctx.fillStyle = p.sk; ctx.beginPath(); ctx.arc(hq[0], hq[1], hr, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = p.sk; ctx.beginPath(); ctx.arc(hq[0], hq[1], hr, 0, 6.283); ctx.fill(); if (!mid) ctx.stroke();
   if (p.hm) { ctx.fillStyle = dark ? shade(p.hm, .8) : p.hm; ctx.beginPath(); ctx.arc(hq[0], hq[1] - hr * .05, hr * 1.18, Math.PI * .92, Math.PI * 2.08); }
   else { ctx.fillStyle = p.hr; ctx.beginPath(); if (hx + hy < -.3) ctx.arc(hq[0], hq[1], hr * 1.02, 0, 6.283); else ctx.arc(hq[0], hq[1] - hr * .1, hr * 1.04, Math.PI, 0); }
-  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.closePath(); ctx.fill(); if (!mid) ctx.stroke();
 }
 
 /* ---------- メイン描画 ---------- */
 const objs = [];
 function draw() {
+  TR = K < TRK[0] ? 0 : K < TRK[1] ? 1 : 2;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.fillStyle = theme.bg; ctx.fillRect(0, 0, CW, CH);
   drawGroundCached();
@@ -3754,7 +3807,7 @@ function updHUD() {
 /* ---------- ループ ---------- */
 let last = performance.now(), acc = 0;
 function frame(now) {
-  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  const t0 = performance.now(), dt = Math.min(.1, (now - last) / 1000), dtMs = (now - last); last = now;
   if (!P.paused) {
     acc += dt * P.speed;
     let n = 0;
@@ -3763,7 +3816,9 @@ function frame(now) {
     while (acc >= st && n < 24) { step(st); acc -= st; n++; }
     if (n >= 24) acc = 0;
   }
-  draw(); updHUD(); follow(dt);
+  const t1 = performance.now();
+  draw(); const t2 = performance.now(); updHUD(); follow(dt);
+  adaptScale(t0, dtMs, performance.now() - t0, t2 - t1);
   requestAnimationFrame(frame);
 }
 
