@@ -1075,6 +1075,7 @@ function makePath(segs) {
 // 右折する車は、交差点の手前 SL+RT_STORE+RT_TAPER から RT_TAPER の間に、l を LN_IN から LN_RT へなめらかに移す（すりつけ）。noRt のときは右折しない
 const smooth = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 const LT_OUT = 1.4, LT_PULL = .6;   // 左折：箱の外へのはみ出し、縁石の角から内がわへ引く量
+const RT_P = .05;                   // 内側の車線の車が交差点で右折する割合（.3 では右折待ちから渋滞が連鎖した。実際に右折する台数が半分になる値）
 function buildCarPath(k, rc, outer, canTurn, noRt, plan) {
   const k0 = k, outer0 = outer, segs = [], cross = [], made = [];
   let h = HEAD[k], L = [h[1], -h[0]], o = outer ? LN_OUT : LN_IN;
@@ -1097,7 +1098,7 @@ function buildCarPath(k, rc, outer, canTurn, noRt, plan) {
     let turn = 'straight';
     const pl = plan && plan[cross.length], ov = !!(pl && pl.ov);   // plan：作りなおすときは、前に決めた曲がり方と、右折レーンを使うか(ov：使わない)をそのまま使う
     if (pl) turn = pl.turn;
-    else if (canTurn && turns < 2) { const t = Math.random(); if (outer && t < .3) turn = 'left'; else if (!outer && t < .3 && !noRt) turn = 'right'; }
+    else if (canTurn && turns < 2) { const t = Math.random(); if (outer && t < .3) turn = 'left'; else if (!outer && t < RT_P && !noRt) turn = 'right'; }
     const cr = { i: ni, k, turn, g: h[0] ? 'ew' : 'ns', stopPt: at(-SL, turn === 'right' && !ov ? LN_RT : o) };
     cross.push(cr); made.push({ turn, ov, dec: pl && pl.dec });
     if (turn === 'straight') {
