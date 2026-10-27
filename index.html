@@ -76,6 +76,17 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-
 .chip[data-t="remove"][aria-pressed="true"]{background:var(--stop);border-color:var(--stop);color:#fff}
 .toast{position:absolute;left:50%;bottom:150px;transform:translateX(-50%);max-width:calc(100% - 20px);padding:8px 14px;border-radius:999px;font-size:12.5px;font-weight:700;pointer-events:none;text-align:center}
 .toast[hidden]{display:none}
+.toast.inc{bottom:196px;width:max-content;display:flex;align-items:center;gap:10px;padding:5px 6px 5px 14px;font-size:12px;pointer-events:auto}
+.toast.inc[hidden]{display:none}
+.toast.inc button{appearance:none;border:0;background:var(--amber);color:var(--on-amber);font:inherit;font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.inclog{list-style:none;margin:0;padding:0;font-size:11px;display:grid;gap:4px}
+.inclog li{display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 8px;align-items:baseline}
+.inclog b{font-weight:700;font-variant-numeric:tabular-nums}
+.inclog em{font-style:normal;font-weight:700;color:var(--stop)}
+.inclog small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.inclog .none{display:block;color:var(--muted)}
+.inclog .now em{color:var(--amber)}
+.row .lab span{font-size:11px;font-weight:700;color:var(--muted)}
 .placing canvas{cursor:crosshair}
 .sheet{position:absolute;left:10px;right:10px;bottom:68px;max-height:56%;overflow-y:auto;padding:14px 16px 16px;background:var(--panel);color:var(--ink);border-radius:16px;box-shadow:0 10px 30px rgba(10,15,25,.35)}
 .sheet[hidden]{display:none}
@@ -115,6 +126,7 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
   .info{left:12px;bottom:76px}
   .palette{bottom:76px}
   .toast{bottom:158px}
+  .toast.inc{bottom:204px}
   .sheet{left:auto;right:12px;top:12px;bottom:76px;width:300px;max-height:none}
   .hud{right:324px}
   .stats{grid-template-columns:auto auto auto auto}
@@ -220,6 +232,20 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
       </div>
       <div class="legend" id="legend"></div>
     </div>
+    <div class="row">
+      <div class="lab">事件の頻度</div>
+      <div class="seg" id="segCrime">
+        <button type="button" data-v="0" aria-pressed="false">なし</button>
+        <button type="button" data-v="600" aria-pressed="false">少ない</button>
+        <button type="button" data-v="300" aria-pressed="true">5分に1回</button>
+        <button type="button" data-v="120" aria-pressed="false">2分に1回</button>
+      </div>
+      <p>ひったくり犯が通行人のうしろから近づいてかばんを奪い、横断歩道を信号を無視して渡りながら街の外へ逃げます。まだ警察はいないので、犯人は必ず逃げ切ります。</p>
+    </div>
+    <div class="row">
+      <div class="lab">事件の記録 <span id="incSum"></span></div>
+      <ol class="inclog" id="incLog"></ol>
+    </div>
     <div class="btns">
       <button type="button" id="btnView">視点を戻す</button>
       <button type="button" id="btnReset">最初から</button>
@@ -247,6 +273,7 @@ input[type=range]{width:100%;accent-color:var(--amber);margin:0}
     <div class="chips" id="chips"></div>
   </section>
   <div class="card toast" id="toast" role="status" hidden></div>
+  <div class="card toast inc" id="incToast" role="status" hidden><span id="incTxt"></span><button type="button" id="incGo">追跡を見る</button></div>
 
   <nav class="toolbar" id="toolbar" aria-label="操作">
     <button type="button" id="btnPause" aria-pressed="false">一時停止</button>
@@ -298,7 +325,7 @@ const SKIN = ['#EBC7A4','#D9AA84','#C08A60','#F2D5B8','#A97452'];
 const HAIR = ['#1E1B1A','#2B2420','#3A2E26','#5A4636','#1B1E24','#7B6A5A'];
 const STEP = 1 / 30;
 
-const P = { rate: 200, green: 20, vary: 40, space: 0.25, color: 'clothes', heat: false, speed: 1, paused: false, rush: false, bike: 8, taxi: 2, bus: 4 };
+const P = { rate: 200, green: 20, vary: 40, space: 0.25, color: 'clothes', heat: false, speed: 1, paused: false, rush: false, bike: 8, taxi: 2, bus: 4, crime: 300 };
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1228,6 +1255,8 @@ function sideForce(p, q, nx, ny, base, body, LAM, R) {
   else if (p.st !== 'approach' && q.st === 'approach') f *= R ? 0.6 : 0.35;
   if (p.beh === 'flee') { f *= .6; body *= .7; }   // 逃げる人は道をゆずらず、押しのける
   else if (q.beh === 'flee') { f *= 1.4; body *= 2; }
+  else if (p.beh === 'thief') { f *= .5; body *= .6; }   // 犯人は道をゆずらず、押しのける
+  else if (q.beh === 'thief' && !p.vic) { f *= 1.6; body *= 2.2; }   // 奪われた人は押しのけない（その場でよろける）
   f += body; // 押し合いでも体が重なりすぎないように
   p.ax += f * nx; p.ay += f * ny;
   // 正面から来る人とは左側通行ぎみにすれ違う
@@ -1265,8 +1294,7 @@ function routeApproach(p, ctx) {
   const S = ctx.S, R = ctx.R, o = ctx.o, dd = Math.hypot(p.tgt.x - p.x, p.tgt.y - p.y);
   if (S.ped === 'go' && dd < (R ? 9 : 4.5)) {
     p.st = 'cross'; p.crossT = 0; p.crossEntered = false;
-    waits.push(p.wait != null ? simT - p.wait : 0);
-    if (waits.length > 1000) waits.shift();
+    if (!p.role) { waits.push(p.wait != null ? simT - p.wait : 0); if (waits.length > 1000) waits.shift(); }
   } else if (S.ped !== 'go' && dd < 8) {
     if (dd < 6 && p.wait == null) p.wait = simT;
     o.sp = R ? p.v0 * .6 : p.v0 * clamp((dd - .3) / (p.bike ? 1.6 * p.v0 / 1.3 : 1.6), 0, 1);
@@ -1463,6 +1491,7 @@ function fearStep(dt) {
       }
     }
   }
+  if (INC && INC.t1) thiefFear(INC.src, dt);   // 犯人も発生源
   for (const f of prev) {
     if (f.gone || f.fear <= .6 || f.road) continue;
     const cap = Math.min(.7, f.fear - .05);
@@ -1565,7 +1594,12 @@ function pushAway(p, ex, ey, x, y, R, k) {
 function spotSteer(p, ex, ey) {
   STX = STY = 0;
   const s = p.fdog;
-  if (p.fear > FEAR_MILD && s && !s.dead && s.b === p.block) pushAway(p, ex, ey, s.x, s.y, 3, 2.6 * Math.min(1, (p.fear - FEAR_MILD) / .2));
+  if (p.fear > FEAR_MILD && s && !s.dead && s.b === p.block) {
+    if (s.th) {   // 犯人：進路と直角の方へ、寄っている側によける
+      const l = -(p.x - s.x) * s.hy + (p.y - s.y) * s.hx, sg = l >= 0 ? 1 : -1, w = 3.2 * Math.min(1, (p.fear - FEAR_MILD) / .2) * Math.max(.3, 1 - Math.abs(l) / 3);
+      STX -= s.hy * sg * w; STY += s.hx * sg * w;
+    } else pushAway(p, ex, ey, s.x, s.y, 3, 2.6 * Math.min(1, (p.fear - FEAR_MILD) / .2));
+  }
   const t = p.tav;
   if (t) { if (simT > t.t1 || t.s.dead) p.tav = null; else pushAway(p, ex, ey, t.s.x, t.s.y, 3, 6); }
 }
@@ -1856,7 +1890,7 @@ function taxiTick(c, dt) {
       if (c.bs === 3 && simT - c.t3 > BOARD_T && d < 1.2) {
         taxiStat.pick++; taxiStat.wait += simT - p.hail.ta;
         c.fare = null; c.pickS = null; c.vacant = false; c.bs = 4; c.t4 = simT + .9;
-        p.taxi = null; hailEnd(p, false); busEnd(p); relVia(p); relGz(p); p.gone = true; p.goneT = simT; p.goneReason = 'taxi'; peds.splice(peds.indexOf(p), 1);
+        p.taxi = null; hailEnd(p, false); busEnd(p); relVia(p); relGz(p); p.gone = true; p.goneT = simT; p.goneReason = 'taxi'; incGone(p); peds.splice(peds.indexOf(p), 1);
       }
     }
   } else if (c.bs === 4 && simT >= c.t4) { c.bs = 0; c.sigR = simT + 2.5; }
@@ -2054,7 +2088,7 @@ function busAlight(c) {
 function busBoard(c, p) {
   const S = c.stop, q = p.bq;
   S.stat.board++; S.stat.wait += simT - q.ta; c.nb++; c.load++; c.tLast = simT; c.tn = simT + .15;
-  busEnd(p); p.gone = true; p.goneT = simT; p.goneReason = 'bus'; peds.splice(peds.indexOf(p), 1);
+  busEnd(p); p.gone = true; p.goneT = simT; p.goneReason = 'bus'; incGone(p); peds.splice(peds.indexOf(p), 1);
 }
 // バスの進行：寄せる → 止まる → 降ろす → 乗せる → ドアを閉めて出発。dt は秒
 function busTick(c, dt) {
@@ -2141,7 +2175,249 @@ const BUS = {
 };
 
 // 上にあるものほど優先
-const BEHAVIORS = [FLEE, HAIL, BUS, GATHER, TISSUE, ROUTE];
+/* ---------- 事件（ひったくり） ---------- */
+// INC：いま進んでいる事件（なければ null、同時に1件まで）。犯人は role:'thief' の歩行者で、行動 THIEF が最優先で動かす（ねらう stalk → 奪う → 逃げる run）。
+// 逃げるあいだは信号を無視して横断歩道を渡る（車道は横断歩道だけ）。周りの人は犯人を「こわさ」の発生源（INC.src）にして、犬と同じしくみで反応する。
+// 頻度は P.crime（平均の間隔・秒、0＝なし）。シミュレーションの時間で指数分布。「なし」のときは乱数を使わない。
+// 段階2（警察）への手がかり：PURSUERS（追っ手の位置）→ pickExit が遠い出口を選ぶ、HOT（車が急ブレーキで避ける相手）に警察官を足す、INC.res に '逮捕' を入れて incEnd を呼ぶ。
+let INC = null, incNext = Infinity, incSeq = 0;
+const INCLOG = [], TRAILS = [], SAYS = [], SKIDS = [], BAGS = [], RINGS = [], LABELS = [], HOT = [], PURSUERS = [], LK = { x: 0, y: 0 };
+const crimeStat = { start: 0, end: 0, hb: 0 };
+const GOSIG = { ped: 'go' }, STOPSIG = { ped: 'stop' };   // 犯人にとっての信号は、いつも青（渡る先の横断歩道に車がいるときだけ、手前で待つ）
+const BAG_COLS = ['#C9553F', '#2F5FA8', '#E9C23A', '#2E8B6A', '#7A4B8C', '#1F2329', '#D9A066'];
+const expoT = m => -Math.log(1 - Math.random()) * m;
+// 小さな吹き出し／記号：犬の「ワン！」と同じ大きさ・同じ描き方（draw 側の incOver）。o は人か車
+function say(o, text, dur, delay) {
+  for (let i = SAYS.length - 1; i >= 0; i--) if (simT > SAYS[i].t1 || SAYS[i].o.gone) SAYS.splice(i, 1);
+  SAYS.push({ o, text, t0: simT + (delay || 0), t1: simT + (delay || 0) + dur });
+}
+// ねらわれる人：ふつうに歩いている人（自転車・バスの列・見物・タクシーを呼ぶ人・駐輪場の用事の人は除く）
+function victimOk(v) {
+  return !v.bike && !v.bq && !v.hail && !v.gz && !v.tk && !v.via && !v.entT && v.inside && !v.road && !v.role && !v.vic && !v.fl && v.fear < .2 && v.act == null && !(v.phT > simT) &&
+    (v.st === 'approach' ? v.wait == null : v.st === 'leave' && Math.hypot(v.exitPt.x - v.x, v.exitPt.y - v.y) > 16) && simT - v.born > 3 && v.vx * v.vx + v.vy * v.vy > .64 && blockAt(v.x, v.y) >= 0 && !inCornerSq(v.x, v.y, 0);
+}
+// 犯人が現れる場所：ねらう人の後ろ4〜8m、見通せる歩道の上
+function thiefSpot(v) {
+  const s = Math.hypot(v.vx, v.vy), hx = v.vx / s, hy = v.vy / s, N = navOf(v.block), G = N.cl;
+  for (const d of [8, 6.5, 5, 4]) for (const a of [0, .45, -.45]) {
+    const c = Math.cos(a), sn = Math.sin(a), x = v.x - (hx * c - hy * sn) * d, y = v.y - (hy * c + hx * sn) * d;
+    if (!inBlock(x, y, v.block, 1) || G[cellIdx(N, x, y)] !== 2 || inCornerSq(x, y, 0) || !los(N, G, x, y, v.x, v.y)) continue;
+    return { x, y };
+  }
+  return null;
+}
+// 逃げる出口：街の外へ。段階1は、ランダムな遠めの出口。段階2は PURSUERS から遠い出口ほど選ばれやすくする
+function pickExit(p) {
+  const c = [];
+  for (const g of GATES) {
+    const mx = g.ax === 'x' ? (g.lo + g.hi) / 2 : g.at, my = g.ax === 'x' ? g.at : (g.lo + g.hi) / 2, d = Math.hypot(mx - p.x, my - p.y);
+    let w = 1; for (const q of PURSUERS) w += Math.hypot(mx - q.x, my - q.y) / 30;
+    c.push({ g, d, w });
+  }
+  let far = c.filter(e => e.d >= 55); if (!far.length) far = c.sort((a, b) => b.d - a.d).slice(0, 3);
+  let r = Math.random() * far.reduce((s, e) => s + e.w, 0), g = far[far.length - 1].g;
+  for (const e of far) { r -= e.w; if (r <= 0) { g = e.g; break; } }
+  return { kind: 'gate', b: g.b, side: g.side, pt: gatePoint(g, true), gl: g.gl };
+}
+function startIncident(manual) {
+  if (INC) { if (manual) toast('いま事件が進んでいます'); return false; }
+  const n = peds.length;
+  for (let k = 0; k < 80 && n; k++) {
+    const v = peds[Math.floor(Math.random() * n)];
+    if (!victimOk(v)) continue;
+    const pos = thiefSpot(v); if (!pos) continue;
+    const to = pickExit(pos), v0 = rand(2.8, 3.2), b = v.block;
+    const p = {
+      x: pos.x, y: pos.y, vx: v.vx, vy: v.vy, ax: 0, ay: 0, st: 'approach', block: b, inside: true,
+      b0: b, exitB: to.b, from: v.from, to, exitPt: to.pt, v0, wv0: v0, bv0: v0, r: .25,
+      cl: '#343A46', pt: '#1E2430', sk: pick(SKIN), hr: '#15181E', ph: Math.random() * 6.28,
+      wait: null, born: simT, crossT: 0, gx: 0, gy: 0, crossed: 0, trail: [pos.x, pos.y, 0], dist: 0, sigStopT: 0, jamT: 0, road: false
+    };
+    p.legs = planRoute(b, to.b, pos, to.pt); p.li = 0; p.planned = p.legs.length;
+    if (p.legs.length) setLeg(p); else p.st = 'leave';
+    p.aimT = 0; p.sj = (++spawnSeq * .618) % 1; p.gl = null; p.gt = null; p.beh = '';
+    p.cur = Math.sqrt(hash(spawnSeq, 3.1, 8.7)); p.pcT = simT + 1e9; p.seen = null; p.gz = null; p.fear = 0; p.hail = null; p.taxi = null; p.entT = 0; p.bq = null;
+    p.role = 'thief'; p.th = { ph: 'stalk', v, t0: simT };
+    v.bagC = pick(BAG_COLS);
+    peds.push(p);
+    INC = { id: ++incSeq, t0: simT, t1: 0, thief: p, victim: v, b, tr: [], trT: 0, rt: 0, hb: 0, drop: false, bx: 0, by: 0,
+      src: { th: true, id: -incSeq, x: p.x, y: p.y, hx: 1, hy: 0, b, dead: false, dF: null, dN: null, dT: 0 } };
+    LK.x = p.x; LK.y = p.y;
+    return true;
+  }
+  if (manual) toast('ねらえる人がいません');
+  return false;
+}
+// 奪う：かばんの色を犯人へ移し、被害者はよろける→「どろぼう！」→犯人の逃げた方を指さす
+function incSnatch(I) {
+  const T = I.thief, V = I.victim, to = pickExit(T);
+  T.th.ph = 'run'; I.t1 = simT; crimeStat.start++;
+  T.bagC = V.bagC; V.bagC = null;
+  V.vic = { t0: simT, t1: simT + 3.6 }; V.aimT = 0;
+  say(V, 'どろぼう！', 2.8, .5);
+  T.to = to; T.exitB = to.b; T.exitPt = to.pt;
+  T.legs = planRoute(T.block, to.b, T, to.pt); T.li = 0; T.planned = T.legs.length; T.wait = null; T.crossT = 0; T.xp = null; T.gl = null; T.aimT = 0;
+  if (T.legs.length) { setLeg(T); T.st = 'approach'; } else T.st = 'leave';
+  T.v0 = rand(2.8, 3.2); T.wv0 = T.bv0 = T.v0;
+  HOT.length = 0; HOT.push(T);
+  I.drop = Math.random() < .25; I.bx = V.x; I.by = V.y; I.tr.push(T.x, T.y);
+  RINGS.push({ x: V.x, y: V.y, t: simT });
+  incToast(`ひったくり発生（${BLOCK_NAME[I.b]}の街区）`);
+  renderLog();
+}
+// 犯人を見た人の反応（0.25秒ごと）：10m以内で見通せる人は顔を向ける。初めて見た人は「！」・スマホで撮る・足を止める
+function incReact(I) {
+  const T = I.thief, s = I.src, b = T.block, N = navOf(b), n = Math.ceil(10 / CELL) + 1;
+  let marks = 0; for (const m of SAYS) if (m.text === '！' && simT < m.t1) marks++;
+  for (let j = Math.max(0, T.gy - n); j <= Math.min(GN - 1, T.gy + n); j++) for (let i = Math.max(0, T.gx - n); i <= Math.min(GN - 1, T.gx + n); i++) {
+    for (const q of grid[j * GN + i]) {
+      if (q === T || q.block !== b || q.road || !q.inside) continue;
+      const d = Math.hypot(q.x - T.x, q.y - T.y); if (d > 10) continue;
+      if (!seesSrc(q, s, d, N)) continue;
+      if (q.inc !== I.id) {
+        q.inc = I.id; q.lkT = simT + rand(2.5, 4);
+        if (q !== I.victim && d < 7 && marks < 6 && Math.random() < .7) { say(q, '！', rand(1, 2)); marks++; }
+        if (q !== I.victim && !q.bike && q.fear < .35 && !q.bq && !q.hail && !q.gz && !q.via && !q.tk && (q.st === 'leave' || (q.st === 'approach' && q.wait == null)) && Math.random() < .15) q.phT = simT + rand(2, 4);
+      } else q.lkT = Math.max(q.lkT, simT + 1.2);
+    }
+  }
+}
+// 発生源が見えるか（0.3秒ごとに調べ直す。2.2m以内は見えるとする）
+function seesSrc(q, s, d, N) {
+  const m = q.dl || (q.dl = {}), e = m[s.id] || (m[s.id] = { t: -1, ok: false });
+  if (simT >= e.t) { e.t = simT + .3; e.ok = d < 2.2 || los(N, N.cl, q.x, q.y, s.x, s.y); }
+  return e.ok;
+}
+// 犯人からのこわさ：半径5m（進む向きの前は7mまで）、見通しが必要。真正面の人は強く（走って逃げる）、ほかは弱く（横へよける）
+function thiefFear(s, dt) {
+  const N = navOf(s.b), T = INC.thief, n = Math.ceil(7 / CELL) + 1;
+  for (let j = Math.max(0, T.gy - n); j <= Math.min(GN - 1, T.gy + n); j++) for (let i = Math.max(0, T.gx - n); i <= Math.min(GN - 1, T.gx + n); i++) {
+    for (const q of grid[j * GN + i]) {
+      if (q === T || q === INC.victim || q.block !== s.b || q.road) continue;
+      const dx = q.x - s.x, dy = q.y - s.y, d = Math.hypot(dx, dy), cs = d > .05 ? (dx * s.hx + dy * s.hy) / d : 1;
+      if (d > 5 + 2 * Math.max(0, cs)) continue;
+      if (!seesSrc(q, s, d, N)) continue;
+      const lat = Math.abs(-dx * s.hy + dy * s.hx);
+      const tg = (cs > .6 && lat < 1.4 ? clamp(.75 - d * .08, .4, .7) : clamp((.3 - d * .03) * (.85 + .3 * q.sj), .17, .27)) * (q.bike ? .6 : 1);
+      if (q.fear < tg) q.fear = Math.min(tg, q.fear + 2.5 * dt); else if (q.fk !== simT) q.fear = Math.max(tg, q.fear - dt / 4);
+      q.fk = simT;
+      if (!q.fdog || q.fdog.dead || q.fdog === s || d < Math.hypot(q.x - q.fdog.x, q.y - q.fdog.y)) q.fdog = s;
+    }
+  }
+}
+function incAbort() {   // 奪う前にねらいが外れた：犯人は消え、事件は数えない
+  const I = INC, T = I.thief; INC = null; HOT.length = 0; I.src.dead = true;
+  if (I.victim) I.victim.bagC = null;
+  T.gone = true; T.goneT = simT; const i = peds.indexOf(T); if (i >= 0) peds.splice(i, 1);
+  incNext = simT + 4;
+}
+function incEnd(res) {
+  const I = INC; INC = null; HOT.length = 0; I.src.dead = true;
+  const T = I.thief, ents = T.ents || [];
+  I.end = simT; I.res = res;
+  INCLOG.push({ id: I.id, t: I.t1, place: BLOCK_NAME[I.b], kind: 'ひったくり', res, dur: simT - I.t1, dist: T.dist, red: ents.filter(e => e.s !== 'go').length, cross: ents.length, hb: I.hb });
+  TRAILS.push({ tr: I.tr, end: simT }); if (TRAILS.length > 3) TRAILS.shift();
+  LABELS.push({ x: clamp(T.x, -1.5, W + 1.5), y: clamp(T.y, -1.5, W + 1.5), text: '逃げられた…', t0: simT, t1: simT + 3.5 });
+  for (let i = BAGS.length - 1; i >= 0; i--) if (BAGS[i].inc !== I.id) BAGS.splice(i, 1);   // 前の事件のかばんは、つぎの事件が終わったら片づく
+  crimeStat.end++;
+  incNext = P.crime ? simT + expoT(P.crime) : Infinity;
+  renderLog();
+}
+// 人が街から消えるとき：事件への参照を外す
+function incGone(p) {
+  for (let i = SAYS.length - 1; i >= 0; i--) if (SAYS[i].o === p) SAYS.splice(i, 1);
+  const I = INC; if (!I) return;
+  if (p === I.thief) { if (p.th.ph === 'run') incEnd('逃走'); else incAbort(); }
+  else if (p === I.victim) I.victim = null;
+}
+function incStep(dt) {
+  if (!INC) { if (simT >= incNext && !startIncident(false)) incNext = simT + 3; return; }
+  const I = INC, T = I.thief, V = I.victim, th = T.th, s = I.src;
+  s.x = T.x; s.y = T.y; s.b = T.block;
+  const sp = Math.hypot(T.vx, T.vy); if (sp > .5) { s.hx = T.vx / sp; s.hy = T.vy / sp; }
+  LK.x = T.x; LK.y = T.y;
+  if (th.ph === 'stalk') {
+    if (!V || V.gone || !V.inside || V.road || V.block !== T.block || (V.st !== 'approach' && V.st !== 'leave') || simT - th.t0 > 14) { incAbort(); return; }
+    if (Math.hypot(V.x - T.x, V.y - T.y) < .9) incSnatch(I);
+    return;
+  }
+  I.trT -= dt; if (I.trT <= 0) { I.trT = .4; I.tr.push(T.x, T.y); }
+  I.rt -= dt; if (I.rt <= 0) { I.rt = .25; incReact(I); }
+  // かばんを落とす（約25%の事件）：人ごみ（すぐそばに2人以上）でぶつかったとき
+  if (I.drop && T.bagC && simT - I.t1 > 3) {
+    let near = 0;
+    for (let j = Math.max(0, T.gy - 1); j <= Math.min(GN - 1, T.gy + 1); j++) for (let i = Math.max(0, T.gx - 1); i <= Math.min(GN - 1, T.gx + 1); i++) for (const q of grid[j * GN + i]) if (q !== T && q !== V && (q.x - T.x) ** 2 + (q.y - T.y) ** 2 < 1.4) near++;
+    if (near >= 2) { BAGS.push({ x: T.x, y: T.y, c: T.bagC, inc: I.id }); T.bagC = null; I.drop = false; }
+  }
+  if (simT - I.t1 > 150) { T.gone = true; T.goneT = simT; const i = peds.indexOf(T); if (i >= 0) peds.splice(i, 1); incEnd('逃走'); }   // 安全弁
+}
+// 渡る先の横断歩道に、いま車の体がかかっているときは、その手前で待つ（止まった車の列の中へは入らない。信号は見ない）
+function thiefHold(p) {
+  if (simT < p.tbT) return p.tb;
+  p.tbT = simT + .25;
+  return p.tb = p.st === 'approach' && p.inside && !p.via && !!p.tgt && Math.hypot(p.tgt.x - p.x, p.tgt.y - p.y) < 9 && pathBlocked(p.tgt.x, p.tgt.y, p.dst.x, p.dst.y);
+}
+// 犯人：ねらう（被害者のうしろから近づく）→ 逃げる（信号を無視して横断歩道を渡る。避難しない）
+const THIEF = {
+  name: 'thief',
+  want: p => p.role === 'thief',
+  act(p, ctx) {
+    const o = ctx.o;
+    if (p.th.ph === 'stalk') { const v = p.th.v; o.tx = v.x; o.ty = v.y; o.sp = Math.hypot(v.vx, v.vy) + 1.5; return o; }
+    ctx.S = thiefHold(p) ? STOPSIG : GOSIG;
+    routeAct(p, ctx);
+    return o;
+  }
+};
+// 被害者：よろけて止まる（0.8秒）→ 犯人の逃げた方を指さして立つ → もとの道すじへ（こわさが少し残る）
+const VICT = {
+  name: 'victim',
+  want(p) {
+    const v = p.vic; if (!v) return false;
+    if (simT >= v.t1 || (p.st !== 'approach' && p.st !== 'leave')) { p.vic = null; p.aimT = 0; p.fear = Math.max(p.fear, .3); p.fk = simT; return false; }
+    return true;
+  },
+  act(p, ctx) {
+    const o = ctx.o, T = INC && INC.thief; o.tx = p.x; o.ty = p.y; o.sp = 0;
+    if (T && simT - p.vic.t0 > .5) { const dx = T.x - p.x, dy = T.y - p.y, l = Math.hypot(dx, dy) || 1; p.fhx = dx / l; p.fhy = dy / l; }
+    return o;
+  }
+};
+// 立ち止まってスマホを向ける人
+const LOOK = {
+  name: 'look',
+  want(p) {
+    if (!(p.phT > simT)) return false;
+    if (!p.inside || p.via || (p.st !== 'approach' && p.st !== 'leave')) { p.phT = 0; return false; }
+    return true;
+  },
+  act(p, ctx) { const o = ctx.o; o.tx = p.x; o.ty = p.y; o.sp = 0; return o; }
+};
+// 記録（設定シート）。件数は 発生・逃走・逮捕
+const fmtT = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function renderLog() {
+  const el = $('incLog'); if (!el) return;
+  const rows = INCLOG.slice(-10).reverse().map(e => `<li><b>${fmtT(e.t)}</b><span>${e.place}の街区・${e.kind}</span><em>${e.res}</em><small>${Math.round(e.dur)}秒</small></li>`);
+  if (INC && INC.t1) rows.unshift(`<li class="now"><b>${fmtT(INC.t1)}</b><span>${BLOCK_NAME[INC.b]}の街区・ひったくり</span><em>追跡中</em><small>${Math.round(simT - INC.t1)}秒</small></li>`);
+  el.innerHTML = rows.join('') || '<li class="none">まだ事件はありません</li>';
+  const n = INCLOG.length + (INC && INC.t1 ? 1 : 0), ar = INCLOG.filter(e => e.res === '逮捕').length;
+  $('incSum').textContent = n ? `発生${n}件・逃走${INCLOG.length - ar}件・逮捕${ar}件` : '';
+}
+let incToastT = 0;
+function incToast(msg) {
+  $('incTxt').textContent = msg; $('incToast').hidden = false;
+  clearTimeout(incToastT); incToastT = setTimeout(() => { $('incToast').hidden = true; }, 4500);
+}
+// 「追跡を見る」：犯人を選び（選んだ人を画面に収め続ける仕組みを使う）、画面を寄せる
+function watchThief() {
+  const T = INC && INC.thief; if (!T || T.gone) { $('incToast').hidden = true; return; }
+  select(T);
+  const q = I(T.x, T.y, .8); OX += CW / 2 - q[0]; OY += CH * .42 - q[1];
+  zoomAt(CW / 2, CH * .42, Math.max(K, 13));
+  $('incToast').hidden = true;
+}
+
+const BEHAVIORS = [THIEF, VICT, FLEE, LOOK, HAIL, BUS, GATHER, TISSUE, ROUTE];
 
 /* ---------- 1ステップ ---------- */
 function step(dt) {
@@ -2158,7 +2434,8 @@ function step(dt) {
   while (spawnAcc >= 1) { spawnAcc -= 1; spawn(); }
 
   buildGrid();
-  if (SPOTS.length) fearStep(dt);
+  if (INC || simT >= incNext) incStep(dt);
+  if (SPOTS.length || INC) fearStep(dt);
   for (const c of cars) carPose(c);
   buildCarGrid();
   // 「我先に」モード：加速が鋭く、距離を詰め、押し返す力も弱い
@@ -2170,7 +2447,7 @@ function step(dt) {
     cx.S = SIGS[p.leg ? p.leg.i : 0]; // いま渡ろうとしている交差点の信号
     if (SPOTS.length) perceive(p, cx);
     let beh = ROUTE;
-    if (SPOTS.length || p.hail || p.bq) for (const bh of BEHAVIORS) if (bh.want(p, cx)) { beh = bh; break; }   // 上にあるものほど優先
+    if (SPOTS.length || INC || p.hail || p.bq) for (const bh of BEHAVIORS) if (bh.want(p, cx)) { beh = bh; break; }   // 上にあるものほど優先
     p.beh = beh.name;
     if (p.fear > 0 && p.fk !== simT) p.fear = Math.max(0, p.fear - dt / 4);   // 犬が見えなくなると4秒ほどで落ち着く
     if (beh === FLEE && p.fear > .6) FLEERS[flI].push(p);
@@ -2188,7 +2465,7 @@ function step(dt) {
       sp = Math.min(sp, 4.5);
     }
     let fx = (ex * sp - p.vx) / TAU, fy = (ey * sp - p.vy) / TAU;
-    p.ex = ex; p.ey = ey; p.sp = sp; p.wt = (waiting && beh !== FLEE) || beh === GATHER || beh === HAIL || (beh === BUS && p.bq && p.bq.st !== 'go');
+    p.ex = ex; p.ey = ey; p.sp = sp; p.wt = (waiting && beh !== FLEE) || beh === GATHER || beh === VICT || beh === LOOK || beh === HAIL || (beh === BUS && p.bq && p.bq.st !== 'go');
     if ((p.fear > FEAR_MILD || p.tav) && beh !== FLEE && (p.st === 'approach' || p.st === 'leave')) { spotSteer(p, ex, ey); fx += STX; fy += STY; }
 
     // 車をよける
@@ -2267,14 +2544,14 @@ function step(dt) {
       });
       if (onRd) p.road = blockAt(p.x, p.y) < 0;
     }
-    if (p.st === 'leave' && p.inside && (p.x < -1 || p.x > W + 1 || p.y < -1 || p.y > W + 1 || (p.to.kind === 'door' && !p.via && Math.hypot(p.x - p.exitPt.x, p.y - p.exitPt.y) < 1))) { relVia(p); relGz(p); hailEnd(p, false); busEnd(p); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
-    if (simT - p.born > 600) { relVia(p); relGz(p); hailEnd(p, false); busEnd(p); p.gone = true; p.goneT = simT; peds.splice(i, 1); continue; }
+    if (p.st === 'leave' && p.inside && (p.x < -1 || p.x > W + 1 || p.y < -1 || p.y > W + 1 || (p.to.kind === 'door' && !p.via && Math.hypot(p.x - p.exitPt.x, p.y - p.exitPt.y) < 1))) { relVia(p); relGz(p); hailEnd(p, false); busEnd(p); p.gone = true; p.goneT = simT; incGone(p); peds.splice(i, 1); continue; }
+    if (simT - p.born > 600) { relVia(p); relGz(p); hailEnd(p, false); busEnd(p); p.gone = true; p.goneT = simT; incGone(p); peds.splice(i, 1); continue; }
     // 歩道から車道に出た瞬間の信号を記録する
     if (p.road && !p.wasRoad && p.st === 'cross' && !p.crossEntered) {
       p.crossEntered = true;
       p.entSig = S.ped; p.entX = p.x; p.entY = p.y;
       (p.ents || (p.ents = [])).push({ x: p.x, y: p.y, s: S.ped });
-      if (S.ped !== 'go') badEntries++;
+      if (S.ped !== 'go' && !p.role) badEntries++;
     }
     p.wasRoad = p.road;
     if (p.st === 'approach' && p.inside) blockLoad[p.block]++;
@@ -2339,6 +2616,15 @@ function step(dt) {
       if (c.stop && c.bs === 1 && c.stop.tOf(x, y) < c.stop.tn + 1 ? carHitAt(x, y, c, mg, undefined, undefined, c.stop) : carHitAt(x, y, c, mg)) { lim = d - 1.6; break; }
       if (d <= 9 && roadPed(x, y, c.w / 2 + .55)) { lim = d - 1.2; break; }
     }
+    // 犯人（段階2では警察官も）が進路の先の横断歩道・車道に出ているときは、急ブレーキで止まる
+    let hard = false;
+    if (HOT.length && c.v > .2) {
+      const lh = Math.min(30, c.v * c.v / 14 + 8), rr = (c.w / 2 + 1) ** 2;
+      for (let d = .5; d <= lh && !hard; d += .75) {
+        const i = pathPt(c, c.s + d), x = Pp.X[i], y = Pp.Y[i];
+        for (const a of HOT) if ((a.road || a.st === 'cross') && (a.x - x) ** 2 + (a.y - y) ** 2 < rr) { if (d - 2 < lim) { lim = d - 2; hard = true; } break; }
+      }
+    }
     // 停止線の手前：信号、交差点の中の詰まり、対向車を確認してから入る
     if (cur && c.s < cur.stopS + .01 && cur.stopS - c.s < 18) {
       let block = st === 'r' || (st === 'y' && cur.stopS - c.s > 5);
@@ -2359,7 +2645,8 @@ function step(dt) {
     const turning = cur && cur.turn !== 'straight' && c.s > (cur.rt && !cur.ov ? cur.tp0 - 3 : cur.stopS - 15);   // 右折レーンへ移る車はすりつけの手前から、ほかの曲がる車は停止線の15m手前から減速
     const vmax = c.kind === 'bus' ? 7 : c.kind === 'truck' ? 8 : turning ? (c.kind === 'bike' ? 6 : 5.5) : c.kind === 'bike' ? 10 : 9;
     const sd = c.bs === 1 ? Math.max(0, c.pickS - c.s) : c.bs > 1 ? 0 : Infinity;   // タクシーが人を乗せる位置までの距離（ゆるやかに止まる）
-    const vt = Math.min(vmax, Math.sqrt(2 * 5 * Math.max(0, lim - .2)), Math.sqrt(2 * 3 * sd));
+    const vt = Math.min(vmax, Math.sqrt(2 * (hard ? 7 : 5) * Math.max(0, lim - .2)), Math.sqrt(2 * 3 * sd));
+    if (hard && c.v > 2.5 && c.v > vt + .5) { c.hbT = simT; if (!c.hbOn) { c.hbOn = true; crimeStat.hb++; if (INC) INC.hb++; say(c, 'プッ！', 1.1); } }
     const acc = c.kind === 'bike' ? 4.5 : c.kind === 'bus' || c.kind === 'truck' ? 2.2 : 3;
     c.v = c.v < vt ? Math.min(vt, c.v + acc * dt) : Math.max(vt, c.v - 9 * dt);
     let mv = c.v * dt;
@@ -2373,6 +2660,19 @@ function step(dt) {
     c.s += mv;
     carPose(c);
     if (c.s > c.len && near.some(o => !before.includes(o) && carsOverlap(c, o))) { c.s = s0; c.v = 0; carPose(c); }
+    if (HOT.length && c.s !== s0) for (const a of HOT) {   // 動いた結果、犯人にぶつかるなら、この瞬間は動かない
+      const dx = a.x - c.cx, dy = a.y - c.cy; if (Math.abs(dx) > 6 || Math.abs(dy) > 6) continue;
+      if (Math.hypot(Math.max(Math.abs(dx * c.hx + dy * c.hy) - c.len / 2, 0), Math.max(Math.abs(-dx * c.hy + dy * c.hx) - c.w / 2, 0)) < a.r) { c.s = s0; c.v = 0; carPose(c); break; }
+    }
+    if (c.hbOn || c.dive > .01) {   // 急ブレーキ中：車体が前に沈み、前輪のブレーキ痕が路面に残る
+      c.dive = c.hbOn ? c.dive + (1 - (c.dive || 0)) * Math.min(1, dt * 10) : c.dive * Math.exp(-dt * 4);
+      if (c.hbOn) {
+        const fx = c.cx + c.hx * (c.len / 2 - .85), fy = c.cy + c.hy * (c.len / 2 - .85);
+        if (c.skx === undefined) { c.skx = fx; c.sky = fy; }
+        else if ((fx - c.skx) ** 2 + (fy - c.sky) ** 2 > .02) { SKIDS.push({ t: simT, ax: c.skx, ay: c.sky, bx: fx, by: fy, nx: -c.hy, ny: c.hx, o: c.w / 2 - .25 }); if (SKIDS.length > 160) SKIDS.shift(); c.skx = fx; c.sky = fy; }
+        if (c.v < .3 && simT - c.hbT > .3) { c.hbOn = false; c.skx = undefined; }
+      }
+    }
   }
   // 安全弁：交差点の中で45秒以上止まったままの車は、行き詰まりとみなして取り除く
   for (const c of cars) {
@@ -3257,7 +3557,26 @@ function busDoor(o, Wd, col, a, f) {
     vpoly([P(-g, .3), P(g, .3), P(g, .56), P(-g, .56)], vsh('#9AA4B0', 1));
   }
 }
+// 急ブレーキ：前に少し沈み、ブレーキランプが強く光る
 function drawCar(c) {
+  const lit = c.hbT > simT - 1.6 && K >= 3.5 && c.kind !== 'bike', dv = c.dive > .02 && K >= 3.5 ? c.dive : 0;
+  if (!lit && !dv) { drawCar0(c); return; }
+  ctx.save();
+  if (dv) {
+    const q0 = I(c.cx, c.cy, 0), pit = K * ZS * .045 * dv;   // 前が下がる（長さ方向 a につき、画面で pit だけ下へ）
+    ctx.translate(q0[0], q0[1]); ctx.transform(1, pit * (c.hx - c.hy) / (2 * .866 * K), 0, 1 + pit * (c.hx + c.hy) / K, 0, 0); ctx.translate(-q0[0], -q0[1]);
+  }
+  drawCar0(c);
+  if (lit) {
+    const o = { cx: c.cx, cy: c.cy, hx: c.hx, hy: c.hy }, L = c.len, Wd = c.w, z = c.kind === 'bus' || c.kind === 'truck' ? .65 : .6, df = vDF;
+    const g = I(c.cx - c.hx * (L / 2 + .8), c.cy - c.hy * (L / 2 + .8), .03);   // 路面にもれる赤い光
+    const gr = ctx.createRadialGradient(g[0], g[1], 0, g[0], g[1], K * .9); gr.addColorStop(0, 'rgba(255,42,36,.34)'); gr.addColorStop(1, 'rgba(255,42,36,0)');
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.ellipse(g[0], g[1], K * .9, K * .5, 0, 0, 6.283); ctx.fill();
+    if (-(o.hx + o.hy) > 0) { vDF = 1; vOL = null; for (const s of [-1, 1]) vbox(vat(o, -L / 2 - .02, s * (Wd / 2 - .26)), .08, .38, z - .05, z + .22, '#FF2B22', { top: '#FF8A7A' }); vDF = df; }
+  }
+  ctx.restore();
+}
+function drawCar0(c) {
   for (const q of quad(c.cx, c.cy, c.hx, c.hy, c.len, c.w)) if (q[0] < 0 || q[0] > W || q[1] < 0 || q[1] > W) return;
   poly(quad(c.cx + .15, c.cy + .15, c.hx, c.hy, c.len + .2, c.w + .2).map(q => [q[0], q[1], .01]), dark ? 'rgba(0,0,0,.35)' : 'rgba(10,15,25,.2)');
   vDF = dark ? .65 : 1;
@@ -3339,10 +3658,13 @@ const hasRR = typeof ctx.roundRect === 'function';
 function snRect(x, y, w, h) { const x0 = sn(x), y0 = sn(y); ctx.fillRect(x0, y0, Math.max(HL, sn(x + w) - x0), Math.max(HL, sn(y + h) - y0)); }
 function drawPed(p) {
   const z0 = blockAt(p.x, p.y) >= 0 ? .15 : 0;
-  const q = I(p.x, p.y, z0), X = q[0], Y = q[1], k = K, zf = k * ZS;
+  const q = I(p.x, p.y, z0), X = q[0] + (p.vic && simT - p.vic.t0 < .8 ? Math.sin((simT - p.vic.t0) * 30) * K * .05 * (1 - (simT - p.vic.t0) / .8) : 0), Y = q[1], k = K, zf = k * ZS;   // 被害者はよろける
   const col = pedColor(p);
   if (p.bike) { drawBike(p, q, z0, col); return; }
-  if (k < 4) { ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.6, 2, zf * 1.6); return; }
+  if (k < 4) {
+    if (p.role === 'thief' && p.th.ph === 'run') { ctx.strokeStyle = theme.stop; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(X, Y - zf * .8, 6, 3.6, 0, 0, 6.283); ctx.stroke(); }   // 縮小表示：犯人は赤い輪
+    ctx.fillStyle = col; ctx.fillRect(X - 1, Y - zf * 1.6, 2, zf * 1.6); return;
+  }
   if (p.entT) ctx.globalAlpha = clamp(1 - (simT - p.entT) / .4, .05, 1);   // タクシーに乗りこむ：すっと消える
   const s = Math.hypot(p.vx, p.vy), amp = Math.min(1, s / .6);
   // 進む向き：動いているあいだは速度の向き、止まったら最後に向いていた向きのまま
@@ -3358,10 +3680,21 @@ function drawPed(p) {
   ctx.fillStyle = 'rgba(15,20,30,.2)';
   ctx.beginPath(); ctx.ellipse(X, Y, k * .3, k * .15, 0, 0, 6.283); ctx.fill();
   if (p === sel) { ctx.strokeStyle = theme.amber; ctx.lineWidth = Math.max(2, k * .12); ctx.beginPath(); ctx.ellipse(X, Y, k * .55, k * .28, 0, 0, 6.283); ctx.stroke(); }
-  const hx = p.fhx === undefined ? 0 : p.fhx, hy = p.fhy === undefined ? 1 : p.fhy, nx = -hy, ny = hx;
+  let hx = p.fhx === undefined ? 0 : p.fhx, hy = p.fhy === undefined ? 1 : p.fhy;
+  if (p.lkT > simT && !p.vic) {   // 犯人のほうへ顔を向ける（絵だけ。動きは変えない）
+    const dx = LK.x - p.x, dy = LK.y - p.y, l = Math.hypot(dx, dy);
+    if (l > .3) { if (p.lfx === undefined) { p.lfx = hx; p.lfy = hy; } p.lfx += (dx / l - p.lfx) * .3; p.lfy += (dy / l - p.lfy) * .3; const ll = Math.hypot(p.lfx, p.lfy) || 1; hx = p.lfx / ll; hy = p.lfy / ll; }
+  } else if (p.lfx !== undefined) p.lfx = undefined;
+  const nx = -hy, ny = hx;
   // 体の部位を、進む向き（a）と横向き（b）のメートルで置く
   const W3 = (a, b, z) => I(p.x + hx * a + nx * b, p.y + hy * a + ny * b, z0 + z);
   const st = Math.sin(p.ph) * amp * .22; // 歩幅（前後の振り）
+  if (p.role === 'thief' && p.th.ph === 'run' && s > 1.2 && k >= 6) {   // 走る線：うしろに短く
+    ctx.strokeStyle = dark ? 'rgba(235,240,247,.6)' : 'rgba(30,38,50,.45)'; ctx.lineWidth = Math.max(1, k * .035); ctx.lineCap = 'round';
+    for (const [b, z, l0, l1] of [[-.12, 1.25, .45, 1.05], [.14, .9, .55, 1.25], [-.1, .55, .4, .95]]) { const a = W3(-l0, b, z), c = W3(-l1, b, z); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(c[0], c[1]); ctx.stroke(); }
+    ctx.lineCap = 'butt';
+  }
+  const pnt = p.vic && simT - p.vic.t0 > .8, phn = p.phT > simT;   // 指さし／スマホを向ける
   // 輪郭線：乗り物と同じ色・太さ
   const ol = dark ? '#05070A' : '#1A1F28', lw = LW(k);
   const limb = (p0, p1, w, c) => limbL(p0, p1, w, c, lw);
@@ -3372,7 +3705,7 @@ function drawPed(p) {
   const leg = sd => limb(W3(0, sd * .09, .78), W3(sd * st, sd * .09, .06), legW, legCol);
   const hup = p.gz && p.gz.st === 'watch' && p.gz.s.state === 'finale';   // 見せ場の拍手：手を上げる
   const hail = p.hail && p.beh === 'hail' && p.hail.st === 'wait' && !(p.taxi && p.taxi.bs > 1);   // タクシーを呼ぶ：来る車の側の腕をまっすぐ上げて、軽くふる
-  const arm = sd => limb(W3(0, sd * .23, 1.36), hup ? W3(.05, sd * .3, 1.9 + .08 * Math.sin(simT * 9 + p.ph + sd)) : hail && sd === 1 ? W3(.04, .3 + .05 * Math.sin(simT * 5 + p.ph), 1.98 + .04 * Math.sin(simT * 2.5 + p.ph)) : W3(-sd * st * 1.1, sd * .25, .88), armW, armCol);
+  const arm = sd => limb(W3(0, sd * .23, 1.36), pnt && sd === nearSide ? W3(.72, sd * .12, 1.45) : phn && sd === nearSide ? W3(.3, sd * .14, 1.5) : hup ? W3(.05, sd * .3, 1.9 + .08 * Math.sin(simT * 9 + p.ph + sd)) : hail && sd === 1 ? W3(.04, .3 + .05 * Math.sin(simT * 5 + p.ph), 1.98 + .04 * Math.sin(simT * 2.5 + p.ph)) : W3(-sd * st * 1.1, sd * .25, .88), armW, armCol);
   const nearSide = (nx + ny) > 0 ? 1 : -1, farSide = -nearSide;  // 見る人に近い側
   leg(farSide); arm(farSide);
   // 胴：角の丸い四角（元の形）。手足だけが進む向きに合わせて動く
@@ -3386,6 +3719,8 @@ function drawPed(p) {
   }
   if (t > 1) { ctx.strokeStyle = dkc(col); ctx.lineWidth = lw; ctx.stroke(); }
   leg(nearSide); arm(nearSide);
+  if (p.bagC && t) { const c = W3(.02, nearSide * .3, .62); bagAt(c[0], c[1], k, p.bagC, lw); }   // かばん（腰のあたり）
+  if (phn && k >= 8) { const c = W3(.3, nearSide * .14, 1.5); ctx.fillStyle = '#fff'; ctx.strokeStyle = ol; ctx.lineWidth = lw; ctx.beginPath(); ctx.rect(c[0] - k * .03, c[1] - k * .055, k * .06, k * .11); ctx.fill(); ctx.stroke(); }   // スマホ
   if (p.tissue > simT && k >= 8) { const c = W3(.1, nearSide * .25, .95); ctx.fillStyle = '#fff'; ctx.strokeStyle = ol; ctx.lineWidth = lw; ctx.beginPath(); ctx.rect(c[0] - k * .045, c[1] - k * .03, k * .09, k * .06); ctx.fill(); ctx.stroke(); }   // 受け取ったティッシュ
   // 頭：奥へ歩いているときは後頭部（髪）、手前へ歩いているときは顔が見える
   const hq = W3(0, 0, 1.62), hr = k * .13;
@@ -3395,6 +3730,10 @@ function drawPed(p) {
   if (hx + hy < -.3) ctx.arc(hq[0], hq[1], hr * 1.02, 0, 6.283);
   else ctx.arc(hq[0], hq[1] - hr * .1, hr * 1.04, Math.PI, 0);
   ctx.closePath(); ctx.fill(); if (t > 1) ctx.stroke();
+  if (p.role === 'thief') {   // キャップ
+    ctx.fillStyle = '#12151A'; ctx.beginPath(); ctx.arc(hq[0], hq[1] - hr * .12, hr * 1.1, Math.PI, 0); ctx.closePath(); ctx.fill();
+    if (hx + hy > -.3) ctx.fillRect(hq[0] - hr * 1.0, hq[1] - hr * .3, hr * 2, hr * .22);
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -3701,6 +4040,85 @@ function drawBike(p, q, z0, col, park) {
 }
 
 /* ---------- メイン描画 ---------- */
+/* ---------- 事件の描画（吹き出しは犬の「ワン！」と同じ大きさ・同じ描き方） ---------- */
+// 小さなかばん（X,Y は底の中心）
+function bagAt(X, Y, k, c, lw) {
+  const w = k * .17, h = k * .15;
+  ctx.fillStyle = dark ? shade(c, .8) : c; ctx.strokeStyle = dark ? '#05070A' : '#1A1F28'; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.rect(X - w / 2, Y - h, w, h); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(X, Y - h, w * .28, Math.PI, 0); ctx.stroke();   // 持ち手
+}
+// 地面に落ちたかばん
+function drawBagG(b) {
+  const q = I(b.x, b.y, .15), k = K;
+  if (q[0] < -30 || q[0] > CW + 30 || q[1] < -30 || q[1] > CH + 30) return;
+  if (k < 5) { ctx.fillStyle = b.c; ctx.fillRect(q[0] - 1.5, q[1] - 2.5, 3, 3); return; }
+  ctx.fillStyle = 'rgba(15,20,30,.2)'; ctx.beginPath(); ctx.ellipse(q[0], q[1], k * .16, k * .08, 0, 0, 6.283); ctx.fill();
+  bagAt(q[0], q[1], k, b.c, LW(k));
+}
+// ブレーキ痕：数秒で薄れて消える
+function drawSkids() {
+  let i = 0; while (i < SKIDS.length && simT - SKIDS[i].t > 5) i++;
+  if (i) SKIDS.splice(0, i);
+  if (!SKIDS.length || K < 3) return;
+  ctx.save(); ctx.lineWidth = Math.max(1.2, K * .12); ctx.strokeStyle = dark ? '#05070A' : '#0A0C10';
+  for (const s of SKIDS) {
+    const q0 = I(s.ax, s.ay, .02); if (q0[0] < -30 || q0[0] > CW + 30 || q0[1] < -30 || q0[1] > CH + 30) continue;
+    ctx.globalAlpha = (1 - (simT - s.t) / 5) * (dark ? .6 : .45);
+    for (const sd of [-1, 1]) {
+      const a = I(s.ax + s.nx * s.o * sd, s.ay + s.ny * s.o * sd, .02), b = I(s.bx + s.nx * s.o * sd, s.by + s.ny * s.o * sd, .02);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+// 逃げた道すじ（赤い破線：経路表示と同じ描き方）
+function drawIncTrail(tr, cur, al) {
+  const n = tr.length / 2 + (cur ? 1 : 0); if (n < 2) return;
+  const pts = [];
+  for (let i = 0; i < tr.length; i += 2) { const x = clamp(tr[i], 0, W), y = clamp(tr[i + 1], 0, W); pts.push(I(x, y, footZ(x, y))); }
+  if (cur) { const x = clamp(cur.x, 0, W), y = clamp(cur.y, 0, W); pts.push(I(x, y, footZ(x, y))); }
+  const path = () => { ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); };
+  ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.globalAlpha = al;
+  ctx.strokeStyle = 'rgba(20,26,36,.45)'; ctx.lineWidth = Math.max(3, K * .2); path(); ctx.stroke();
+  ctx.setLineDash([Math.max(4, K * .5), Math.max(3, K * .35)]); ctx.lineDashOffset = -simT * K * 1.2;
+  ctx.strokeStyle = theme.stop; ctx.lineWidth = Math.max(2, K * .12); path(); ctx.stroke();
+  ctx.restore();
+}
+// 事件の地面の絵：発生場所の赤い輪（1度だけ広がる）と、追跡の道すじ
+function incGround() {
+  for (let i = RINGS.length - 1; i >= 0; i--) {
+    const r = RINGS[i], age = simT - r.t;
+    if (age > 1.6) { RINGS.splice(i, 1); continue; }
+    const q = I(r.x, r.y, .05), rr = .6 + 3.2 * age / 1.6;
+    ctx.save(); ctx.globalAlpha = 1 - age / 1.6; ctx.strokeStyle = theme.stop; ctx.lineWidth = Math.max(1.5, K * .09);
+    ctx.beginPath(); ctx.ellipse(q[0], q[1], 1.2247 * rr * K, .7071 * rr * K, 0, 0, 6.283); ctx.stroke(); ctx.restore();
+  }
+  for (let i = TRAILS.length - 1; i >= 0; i--) {
+    const t = TRAILS[i], age = simT - t.end;
+    if (age > 20) { TRAILS.splice(i, 1); continue; }
+    drawIncTrail(t.tr, null, age < 15 ? 1 : 1 - (age - 15) / 5);   // 事件が終わって20秒で消える（最後の5秒でうすれる）
+  }
+  if (INC && INC.t1) drawIncTrail(INC.tr, INC.thief, 1);
+}
+// 小さな吹き出し：「どろぼう！」「！」「プッ！」と、結末の「逃げられた…」
+function incOver() {
+  for (let i = LABELS.length - 1; i >= 0; i--) if (simT > LABELS[i].t1) LABELS.splice(i, 1);
+  for (let i = SAYS.length - 1; i >= 0; i--) if (simT > SAYS[i].t1 || SAYS[i].o.gone) SAYS.splice(i, 1);
+  if (K < 4) return;
+  const fs = Math.max(10, K * .4), ok = q => q[0] > -40 && q[0] < CW + 40 && q[1] > -20 && q[1] < CH + 120;
+  for (const m of SAYS) {
+    if (simT < m.t0) continue;
+    const o = m.o, car = o.len !== undefined, q = car ? I(o.cx, o.cy, .15) : I(o.x, o.y, footZ(o.x, o.y));
+    if (!ok(q)) continue;
+    bubble(q[0] + K * .1, q[1] - K * ZS * (car ? 2.45 : 2.23), m.text, fs, q[0], q[1] - K * ZS * (car ? 1.7 : 1.85));
+  }
+  for (const l of LABELS) {
+    const q = I(l.x, l.y, .15); if (!ok(q)) continue;
+    bubble(q[0] + K * .1, q[1] - K * ZS * 1.25, l.text, fs, q[0], q[1] - K * ZS * .3);
+  }
+}
+
 const objs = [];
 function draw() {
   TR = K < TRK[0] ? 0 : K < TRK[1] ? 1 : 2;
@@ -3708,6 +4126,7 @@ function draw() {
   ctx.fillStyle = theme.bg; ctx.fillRect(0, 0, CW, CH);
   drawGroundCached();
   if (P.heat) drawHeat();
+  drawSkids();
   const S = sig();
   objs.length = 0;
   for (const b of BLD) objs.push({ k: b.k, t: 0, o: b });
@@ -3747,6 +4166,7 @@ function draw() {
     const q = I(s.x, s.y, .15); if (q[0] < -50 || q[0] > CW + 50 || q[1] < -50 || q[1] > CH + 100) continue;
     objs.push({ k: bldKey(s.x + s.y, s.x, s.y) + (s.x + s.y) * 1e-6, t: 4, o: s });
   }
+  for (const b of BAGS) objs.push({ k: bldKey(b.x + b.y, b.x, b.y), t: 9, o: b });
   for (const S of BSTOPS) {
     const c = S.pt(-3.45, 1), p = S.pole;
     objs.push({ k: bldKey(c.x + c.y, c.x, c.y), t: 7, o: S }, { k: bldKey(p.x + p.y, p.x, p.y), t: 8, o: S });
@@ -3771,6 +4191,7 @@ function draw() {
     else if (o.t === 4) { o.o.pp.bc = o.o.bike.bc; drawBike(o.o.pp, I(o.o.x, o.o.y, .15), .15, '', true); }
     else if (o.t === 3) drawPed(o.o);
     else if (o.t === 2) drawCar(o.o);
+    else if (o.t === 9) drawBagG(o.o);
     else if (o.t === 1) drawPole(o.o, S);
     else if (o.t === 7) drawBusShelter(o.o);
     else if (o.t === 8) drawBusPole(o.o);
@@ -3779,6 +4200,8 @@ function draw() {
   bldSweep();
   for (const s of SPOTS) { const ov = SPOT_KINDS[s.kind].over; if (ov) ov(s); }
   for (const S of BSTOPS) busOver(S);
+  incGround();
+  incOver();
   drawRoute();
   drawSelMarker();
   if (tool === 'remove') drawSpotMarks();
@@ -3965,12 +4388,15 @@ function select(p) {
 function updInfo() {
   if (!sel) return;
   const p = sel, S = sigAt(p.leg ? p.leg.i : 0), vb = p.bike;
-  $('infoTitle').textContent = vb ? 'この自転車の行き先' : 'この人の行き先';
+  $('infoTitle').textContent = p.role === 'thief' ? 'ひったくり犯の逃走' : vb ? 'この自転車の行き先' : 'この人の行き先';
   const left = p.st === 'leave' || p.gone ? 0 : p.st === 'refuge' ? (p.nextLegs || []).length : p.legs.length - p.li;
-  $('infoRoute').innerHTML = `<i style="background:${placeCol(p.from)}"></i>${placeName(p.from)}から<i style="background:${placeCol(p.to)}"></i>${placeName(p.to)}へ（横断${p.crossed}回済み、残り${left}回）`;
+  $('infoRoute').innerHTML = p.role === 'thief' ? (p.th.ph === 'stalk' ? `${BLOCK_NAME[p.block]}の街区で、歩いている人をねらっている` : `${BLOCK_NAME[INC && INC.b != null ? INC.b : p.b0]}の街区から<i style="background:${placeCol(p.to)}"></i>${placeName(p.to)}へ逃走中（横断${p.crossed}回済み、残り${left}回）`) : `<i style="background:${placeCol(p.from)}"></i>${placeName(p.from)}から<i style="background:${placeCol(p.to)}"></i>${placeName(p.to)}へ（横断${p.crossed}回済み、残り${left}回）`;
   let state, now = p.st === 'approach' ? 0 : p.st === 'cross' || p.st === 'refuge' ? 1 : 2;
-  if (p.gone) { state = p.goneReason === 'taxi' ? 'タクシーに乗って出発しました' : p.goneReason === 'bus' ? 'バスに乗って出発しました' : p.to.kind === 'door' ? `${placeName(p.to)}に着きました` : '街を出ました'; now = 3; }
-  else if (p.beh === 'flee') state = `犬から逃げている（こわさ${Math.round(p.fear * 100)}%）`;
+  if (p.gone) { state = p.role === 'thief' ? '街の外へ逃げ切りました' : p.goneReason === 'taxi' ? 'タクシーに乗って出発しました' : p.goneReason === 'bus' ? 'バスに乗って出発しました' : p.to.kind === 'door' ? `${placeName(p.to)}に着きました` : '街を出ました'; now = 3; }
+  else if (p.role === 'thief') state = p.th.ph === 'stalk' ? 'ねらった人のうしろから近づいている' : p.st === 'cross' ? `かばんを持って逃走中。信号を無視して横断中（${Math.floor(p.crossT)}秒）` : 'かばんを奪って逃走中（横断歩道は信号を無視して渡る）';
+  else if (p.vic) state = simT - p.vic.t0 < .8 ? 'かばんを奪われて、よろけた' : '「どろぼう！」犯人の逃げた方を指さしている';
+  else if (p.beh === 'flee') state = `${p.fdog && p.fdog.th ? 'ひったくり犯' : '犬'}から逃げている（こわさ${Math.round(p.fear * 100)}%）`;
+  else if (p.phT > simT) state = 'ひったくり犯にスマホを向けている';
   else if (p.hail && p.beh === 'hail') state = p.entT ? 'タクシーに乗りこんでいる' : p.taxi && p.taxi.bs > 1 ? 'タクシーが止まった。ドアの横へ向かっている' : p.hail.st === 'go' ? 'タクシーを呼びに道ぎわへ向かっている' : `タクシーを呼んでいる（${Math.floor(simT - p.hail.ta)}秒）`;
   else if (p.bq && p.beh === 'bus') { const q = p.bq; state = q.st === 'board' ? 'バスに乗りこむ' : q.st === 'go' ? `バス停（${q.s.name}）へ向かっている` : `バスを待っている（${(q.st === 'wait' ? 0 : q.s.q.length) + q.i + 1}番目）`; }
   else if (p.gz) state = SPOT_KINDS[p.gz.s.kind].say(p);
@@ -3978,7 +4404,8 @@ function updInfo() {
   else if (p.beh === 'tissue') state = 'ティッシュをもらいに寄っている';
   else if (p.act != null) state = p.via.act === 'park' ? '自転車を停めている' : '駐輪場から自転車を出している';
   else if (p.via) state = '駐輪場へ向かっている';
-  else if (p.fear > FEAR_MILD && p.fdog && !p.fdog.dead && (p.st === 'leave' || (p.st === 'approach' && p.wait == null))) state = '犬をよけて歩いている';
+  else if (p.fear > FEAR_MILD && p.fdog && !p.fdog.dead && (p.st === 'leave' || (p.st === 'approach' && p.wait == null))) state = `${p.fdog.th ? 'ひったくり犯' : '犬'}をよけて歩いている`;
+  else if (p.lkT > simT) state = 'ひったくり犯のほうを見ている';
   else if (p.st === 'approach') state = p.wait != null && S.ped !== 'go' ? `${p.refuges ? '避難先で' : ''}信号待ち（${Math.floor(simT - p.wait)}秒）` : p.inside ? `${BLOCK_NAME[p.block]}の街区の歩道を${vb ? '走' : '歩'}っている` : '歩道に上がっている';
   else if (p.st === 'refuge') state = `赤になったので${BLOCK_NAME[p.refB]}の街区の歩道へ避難中`;
   else if (p.st === 'cross') state = `${S.ped === 'go' ? '横断中' : '急いで横断中'}（${Math.floor(p.crossT)}秒）`;
@@ -4016,11 +4443,14 @@ function reset() {
   select(null);
   while (SPOTS.length) removeSpot(SPOTS[0]);
   FLEERS[0].length = FLEERS[1].length = 0;
+  INC = null; HOT.length = PURSUERS.length = TRAILS.length = SAYS.length = SKIDS.length = BAGS.length = RINGS.length = LABELS.length = INCLOG.length = 0; for (const k in crimeStat) crimeStat[k] = 0; $('incToast').hidden = true;
   hailers = []; for (const k in taxiStat) taxiStat[k] = 0;
   BSTOPS.forEach((S, i) => { S.q.length = S.loose.length = 0; S.log.length = 0; for (const k in S.stat) S.stat[k] = 0; S.nextBus = 20 + 30 * i; S.nsch = 0; });
   peds = []; waits = []; badEntries = 0; overflow = 0; simT = 0; spawnAcc = 0; sigIdx = 0; sigT = 0; heat.fill(0);
   for (const R of RACKS) for (const s of R.slots) { s.res = false; s.bike = Math.random() < .4 ? { bc: pick(BIKE_COLS), taken: false } : null; } // 駐輪場に自転車をまばらに停めておく
   cars = []; for (const e of ENTRY) { e.next = rand(0, 3); e.last = null; e.bus = false; }
+  incNext = P.crime ? 45 + expoT(P.crime) : Infinity;   // ならし運転（30秒）のあとから
+  renderLog();
   for (let i = 0; i < 30 / STEP; i++) step(STEP);
 }
 
@@ -4082,6 +4512,12 @@ $('segColor').addEventListener('click', e => {
   renderLegend();
 });
 renderLegend();
+$('segCrime').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  P.crime = +b.dataset.v; incNext = INC ? Infinity : P.crime ? simT + expoT(P.crime) : Infinity;
+  for (const x of $('segCrime').children) x.setAttribute('aria-pressed', x === b);
+});
+$('incGo').addEventListener('click', watchThief);
 $('segMode').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   P.rush = b.dataset.v === 'rush';
@@ -4098,7 +4534,7 @@ function toast(msg) {
 // チップは SPOT_KINDS から作る（最後に「取り除く」）
 function renderChips() {
   const chip = (t, dot, name, cnt) => `<button type="button" class="chip" data-t="${t}" aria-pressed="${tool === t}">${dot ? `<i style="background:${dot}"></i>` : ''}${name}${cnt ? `<small>${cnt}</small>` : ''}</button>`;
-  $('chips').innerHTML = Object.entries(SPOT_KINDS).map(([k, K]) => chip(k, K.col, K.label, SPOTS.filter(s => s.kind === k).length + '/' + K.max)).join('') + chip('remove', '', '取り除く', '');
+  $('chips').innerHTML = Object.entries(SPOT_KINDS).map(([k, K]) => chip(k, K.col, K.label, SPOTS.filter(s => s.kind === k).length + '/' + K.max)).join('') + chip('incident', '#E5484D', '事件を起こす', '') + chip('remove', '', '取り除く', '');
   $('app').classList.toggle('placing', !!tool);
 }
 function setTool(t) { tool = t; renderChips(); }
@@ -4107,7 +4543,11 @@ function setPalette(open) {
   if (open) { select(null); if (!wide()) setSheet(false); } else tool = null;
   renderChips();
 }
-$('chips').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setTool(tool === b.dataset.t ? null : b.dataset.t); });
+$('chips').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.t === 'incident') { if (startIncident(true)) setPalette(false); return; }   // 事件はすぐ1件（道具としては選ばない）
+  setTool(tool === b.dataset.t ? null : b.dataset.t);
+});
 btnPlace.addEventListener('click', () => setPalette(palette.hidden));
 // 画面の点を、歩道の高さの地面の位置にもどす
 function unI(sx, sy, z) { const u = (sx - OX) / (K * .866), v = (sy - OY + z * K * ZS) / (K * .5); return { x: (u + v) / 2, y: (v - u) / 2 }; }
@@ -4137,7 +4577,7 @@ btnSpeed.addEventListener('click', () => {
 const btnHeat = $('btnHeat');
 btnHeat.addEventListener('click', () => { P.heat = !P.heat; btnHeat.setAttribute('aria-pressed', P.heat); });
 const sheet = $('sheet'), btnSheet = $('btnSheet');
-function setSheet(open) { sheet.hidden = !open; btnSheet.setAttribute('aria-pressed', open); }
+function setSheet(open) { sheet.hidden = !open; btnSheet.setAttribute('aria-pressed', open); if (open) renderLog(); }
 btnSheet.addEventListener('click', () => { if (sheet.hidden && !wide()) setPalette(false); setSheet(sheet.hidden); });
 $('btnView').addEventListener('click', fit);
 $('btnReset').addEventListener('click', reset);
